@@ -234,6 +234,8 @@ private:
         return x;
     }
 
+    // Red-black gauss seidel implementation of solving incompressibility. 
+    // May or may not converge faster than normal iteration, I just wanted to see if it would be viable for multithreading. 
     void solvePass(const float overRelaxation, const bool red) {
         // First Pass: Red Cells (i + j) % 2 == 0
         int n = numY;
@@ -243,7 +245,7 @@ private:
                     if ((i + j) % 2 != 0) continue; // Skip black cells
                 }
                 else {
-                    if ((i + j) % 2 == 0) continue; // Skip black cells
+                    if ((i + j) % 2 == 0) continue; // Skip red cells
                 }
                 if (this->cellType[i * n + j] != FLUID_CELL) continue;
 
