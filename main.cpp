@@ -440,21 +440,24 @@ public:
     }
 
     void makeParticleQueriesMulti(int startColumn, int endColumn) {
-        for (int c = startColumn; c < endColumn; ++c) {
+        for (int c = 1; c < nX - 1; ++c) {
             for (int r = 1; r < nY - 1; ++r) {
                 
                 // add cellSpacing to the row and column values because the sim is offset by that value
-                int cell = this->getCell(c * this->spacing + cellSpacing, r * this->spacing + cellSpacing);
+                int cell = r + c * nY;
                 int firstStart = this->cellCount[cell];
                 int firstEnd = this->cellCount[cell + 1];
 
                 for (int particleKey = firstStart; particleKey < firstEnd; particleKey++) {
+                    
+                    /*int particleIndex = this->particleArray[particleKey];
 
-                    int particleIndex = this->particleArray[particleKey];
+                    particleColors[3 * particleIndex] = 0;
+                    particleColors[3 * particleIndex + 1] = 255;
+                    particleColors[3 * particleIndex + 2] = 0;
 
                     for (int i = -1; i < 2; ++i) {
                         for (int j = -int(std::min(positions[2 * particleIndex + 1] / this->spacing, 1.f)); j < int(std::min(std::ceil(this->nY - positions[2 * particleIndex + 1] / this->spacing), 2.f)); ++j) {
-
                             int otherCell = this->getCell(this->positions[particleIndex * 2] + i * this->spacing, this->positions[particleIndex * 2 + 1] + j * this->spacing);
                             if (otherCell < 0 || otherCell > tableSize2 - 1) continue;
 
@@ -462,12 +465,12 @@ public:
                             int end = this->cellCount2[otherCell + 1];
 
                             for (int otherParticleKey = start; otherParticleKey < end; ++otherParticleKey) {
-                            
+                                // this line is executing
                                 int otherParticleID = this->particleArray[otherParticleKey];
 
+                                // stopping here every time
                                 if (otherParticleID == particleIndex) continue;
-                                
-                                std::cout << 1;
+
                                 float dx = this->positions[otherParticleID * 2] - this->positions[particleIndex * 2];
                                 float dy = this->positions[otherParticleID * 2 + 1] - this->positions[particleIndex * 2 + 1];
                                 float d2 = dx * dx + dy * dy;
@@ -482,7 +485,7 @@ public:
                                 this->positions[2 * otherParticleID + 1] += dy;
                             }
                         }
-                    }  
+                    }*/
                 }
             }
         }
