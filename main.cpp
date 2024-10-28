@@ -442,10 +442,12 @@ public:
     void makeForceObjectQueriesConstantMem(bool forceObjectActive) {
         if (forceObjectActive) {
             // might have to make this std::max(1, ...); 
-            float numCovered = int(std::ceil(forceObjectRadius / this->spacing));
+            // using cellSpacing instead of spacing just works for the constant memory hashing idk why
+            float spacing = cellSpacing * 0.5;
+            float numCovered = int(std::ceil(forceObjectRadius / spacing));
             for (int i = -numCovered; i < numCovered + 1; ++i) {
                 for (int j = -numCovered; j < numCovered + 1; ++j) {
-                    int hashedCell = this->hashCoords(mouseX + i * this->spacing, mouseY + j * this->spacing);
+                    int hashedCell = this->hashCoords(mouseX + i * spacing, mouseY + j * spacing);
                     int start = this->cellCount[hashedCell];
                     int end = this->cellCount[hashedCell + 1];
                     for (int p = start; p < end; ++p) {
@@ -896,17 +898,16 @@ public:
 
         this->integrate(sdt, window);
 
-        //this->initializeSH();
-        this->initializeSHConstantMem();
+        this->initializeSH();
+        //this->initializeSHConstantMem();
 
-        //for (int i = 0; i < numParticles; ++i) {
-        //    this->makeParticleQueries(i);
-        //}
+        for (int i = 0; i < numParticles; ++i) {
+            this->makeParticleQueries(i);
+        }
+        //this->makeParticleQueriesConstantMem(0, numParticles);
 
-        this->makeParticleQueriesConstantMem(0, numParticles);
-
-        //this->makeForceObjectQueries(forceObjectActive);
-        this->makeForceObjectQueriesConstantMem(forceObjectActive);
+        this->makeForceObjectQueries(forceObjectActive);
+        //this->makeForceObjectQueriesConstantMem(forceObjectActive);
 
         this->constrainWalls();
 
