@@ -439,6 +439,55 @@ public:
         }  
     }
 
+    void makeParticleQueriesMulti(int startColumn, int endColumn) {
+        for (int c = startColumn; c < endColumn; ++c) {
+            for (int r = 1; r < nY - 1; ++r) {
+                
+                // add cellSpacing to the row and column values because the sim is offset by that value
+                int cell = this->getCell(c * this->spacing + cellSpacing, r * this->spacing + cellSpacing);
+                int firstStart = this->cellCount[cell];
+                int firstEnd = this->cellCount[cell + 1];
+
+                for (int particleKey = firstStart; particleKey < firstEnd; particleKey++) {
+
+                    int particleIndex = this->particleArray[particleKey];
+
+                    for (int i = -1; i < 2; ++i) {
+                        for (int j = -int(std::min(positions[2 * particleIndex + 1] / this->spacing, 1.f)); j < int(std::min(std::ceil(this->nY - positions[2 * particleIndex + 1] / this->spacing), 2.f)); ++j) {
+
+                            int otherCell = this->getCell(this->positions[particleIndex * 2] + i * this->spacing, this->positions[particleIndex * 2 + 1] + j * this->spacing);
+                            if (otherCell < 0 || otherCell > tableSize2 - 1) continue;
+
+                            int start = this->cellCount2[otherCell];
+                            int end = this->cellCount2[otherCell + 1];
+
+                            for (int otherParticleKey = start; otherParticleKey < end; ++otherParticleKey) {
+                            
+                                int otherParticleID = this->particleArray[otherParticleKey];
+
+                                if (otherParticleID == particleIndex) continue;
+                                
+                                std::cout << 1;
+                                float dx = this->positions[otherParticleID * 2] - this->positions[particleIndex * 2];
+                                float dy = this->positions[otherParticleID * 2 + 1] - this->positions[particleIndex * 2 + 1];
+                                float d2 = dx * dx + dy * dy;
+                                if (d2 > checkSeperationDist || d2 == 0.0) continue;
+                                float d = std::sqrt(d2); 
+                                float s = 0.5 * (moveDist - d) / d;
+                                dx *= s;
+                                dy *= s;
+                                this->positions[2 * particleIndex] -= dx;
+                                this->positions[2 * particleIndex + 1] -= dy;
+                                this->positions[2 * otherParticleID] += dx;
+                                this->positions[2 * otherParticleID + 1] += dy;
+                            }
+                        }
+                    }  
+                }
+            }
+        }
+    }
+
     void makeForceObjectQueriesConstantMem(bool forceObjectActive) {
         if (forceObjectActive) {
             // might have to make this std::max(1, ...); 
