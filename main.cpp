@@ -28,7 +28,7 @@ class Fluid {
     std::vector<float> cellColor;
     std::vector<float> positions;
     std::vector<float> velocities;
-    std::vector<float> particleDensity;
+    std::vector<float> particleDensity = 0;
     float particleRestDensity;
     int tableSize;
     int numObjects;
