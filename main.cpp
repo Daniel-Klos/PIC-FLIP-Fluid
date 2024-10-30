@@ -108,9 +108,11 @@ class Fluid {
 
     sf::RenderStates states;
 
+    float k;
+
 public:
-    Fluid(float density, float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity) {
+    Fluid(float density, float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k)
+        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k) {
             this->u.resize(numCells);
             this->v.resize(numCells);
             this->du.resize(numCells);
@@ -603,8 +605,8 @@ public:
 
         if (toGrid) {
             // make a copy of the grid
-            //std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
-            //std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
+            std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
+            std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
             std::fill(begin(this->du), end(this->du), 0.f);
             std::fill(begin(this->dv), end(this->dv), 0.f);
             std::fill(begin(this->u), end(this->u), 0.f);
@@ -849,10 +851,9 @@ public:
                     float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
 
                     if (this->particleRestDensity > 0.f) {
-                        float k = 2.3f; // 2.5
                         float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
                         if (compression > 0.f) {
-                            divergence -= k * compression;
+                            divergence -= this->k * compression;
                         }
                     }
 
@@ -869,7 +870,7 @@ public:
     }
 
     // would need a gigantic grid for incompressibility multithreading to be viable 
-    /*void solveIncompressibility(const int numIters, const float overRelaxation) {
+    void solveIncompressibilityRedBlack(const int numIters, const float overRelaxation) {
         std::fill(begin(this->p), end(this->p), 0);
 
         std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
@@ -881,13 +882,13 @@ public:
 
             this->solvePass(overRelaxation, false);
         }
-    }*/
+    }
 
     void includeRigidObject(const bool mouseDown, const bool justPressed, const float dt) {
         if (mouseDown) {
             int n = numY;
-            float vx = (objectX - objectPrevX) * 75;
-            float vy = (objectY - objectPrevY) * 75;
+            float vx = (objectX - objectPrevX) * 100;
+            float vy = (objectY - objectPrevY) * 100;
             for (int i = 1; i < numX - 1; i++) {
                 for (int j = 1; j < numY - 1; j++) {
                     //cellType[i * n + j] = AIR_CELL;
@@ -996,6 +997,8 @@ public:
         if (!forceObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed, sdt);
         }
+        
+        //this->solveIncompressibilityRedBlack(numPressureIters, overRelaxation);
         this->solveIncompressibility(numPressureIters, overRelaxation);
         
         this->transferVelocities(false, flipRatio);
@@ -1004,7 +1007,7 @@ public:
             if (leftMouseDown) {
                 this->applyForceObjectForces(250, sdt); // pulling, 250
             }
-            else if (rightMouseDown) { // dont worry about the forceObject being stuck in push/pull mode. the boolean in the seperate particles method will take care of that 
+            else if (rightMouseDown) { 
                 this->applyForceObjectForces(-1000, sdt); // pushing, -1000
             }
         }
@@ -1041,17 +1044,27 @@ public:
             this->checkForceObjectSeperationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
         }
     }
+
+    void addToGravity(float add) {
+        this->gravity += add;
+    }
+
+    float getGravity() {
+        return this->gravity;
+    }
    
 };
 
 
 int main()
 {
-    int WIDTH = 2000; //2000, 800
-    int HEIGHT = 1000; // 800, 1300 
-    int numParticles = 10000; // 5000
-    float restitution = 0.5f;
-    float gravity = 2500.f; //2500
+    int WIDTH = 2000; //wide simulation: 2000  |  tall simulation: 800
+    int HEIGHT = 1000; // wide simulatoin: 1000  |  tall simulation: 1300 
+    int numParticles = 10000; 
+    float gravity = 2500.f; 
+    float modifyDivergence = 3.f; // for a wide simulation: ~3 for 10k, 4 for 20k  |  for tall: 15 for 10k 
+    float gridSize = 70; // for wide: 50-70  |  for tall: 80-90
+    int numPressureIters = 20; // for a wide simulation : ~20  |  for a tall simulation: ~50
 
     sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "FLIP Simulation");
 
@@ -1080,18 +1093,19 @@ int main()
     bool leftMouseDown = false;
     bool rightMouseDown = false;
 
-    Fluid fluid = Fluid(1000, WIDTH, HEIGHT, 1.f * HEIGHT / 70, numParticles, gravity);  //50
+    Fluid fluid = Fluid(1000, WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, modifyDivergence);  //50
 
     float overRelaxation = 1.9f;
     float flipRatio = 0.95f;
-
-    int numPressureIters = 20;
 
     bool justPressed = false;
 
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << flipRatio; 
+
+    std::ostringstream oss2;
+    oss2 << std::fixed << std::setprecision(0) << gravity; 
 
     bool forceObjectActive = true; 
 
@@ -1142,6 +1156,18 @@ int main()
                 else if (event.key.code == sf::Keyboard::R) {
                     fluid.addToForceObjectRadius(-3);
                 }
+                else if (event.key.code == sf::Keyboard::G) {
+                    fluid.addToGravity(100);
+                    oss2.str("");  
+                    oss2.clear();
+                    oss2 << std::fixed << std::setprecision(0) << fluid.getGravity();
+                }
+                else if (event.key.code == sf::Keyboard::N) {
+                    fluid.addToGravity(-100);
+                    oss2.str("");  
+                    oss2.clear();
+                    oss2 << std::fixed << std::setprecision(0) << fluid.getGravity();
+                }
                 else if (event.key.code == sf::Keyboard::Q) {
                     //std::cout << totalDT / numDT;
                     window.close();
@@ -1183,6 +1209,10 @@ int main()
 
         text.setPosition(WIDTH - 175, 10);
         text.setString(oss.str());
+        window.draw(text);
+
+        text.setPosition(WIDTH - 275, 10);
+        text.setString(oss2.str());
         window.draw(text);
 
 
