@@ -28,8 +28,8 @@ class Fluid {
     std::vector<float> cellColor;
     std::vector<float> positions;
     std::vector<float> velocities;
-    std::vector<float> particleDensity = 0;
-    float particleRestDensity;
+    std::vector<float> particleDensity;
+    float particleRestDensity = 0;
     int tableSize;
     int numObjects;
     std::vector<int> cellCount;
@@ -801,7 +801,7 @@ public:
             if (x1 < this->numX && y1 < this->numY) {
                 this->particleDensity[x1 * n + y1] += tx * ty;
             }
-            if (x1 < this->numX && y1 < this->numY) {
+            if (x0 < this->numX && y1 < this->numY) {
                 this->particleDensity[x0 * n + y1] += sx * ty;
             }
         }
@@ -849,7 +849,7 @@ public:
                     float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
 
                     if (this->particleRestDensity > 0.f) {
-                        float k = 2.5f; // 6
+                        float k = 2.3f; // 2.5
                         float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
                         if (compression > 0.f) {
                             divergence -= k * compression;
@@ -1049,7 +1049,7 @@ int main()
 {
     int WIDTH = 2000; //2000, 800
     int HEIGHT = 1000; // 800, 1300 
-    int numParticles = 8000; // 5000
+    int numParticles = 10000; // 5000
     float restitution = 0.5f;
     float gravity = 2500.f; //2500
 
@@ -1177,7 +1177,7 @@ int main()
         }
 
         text.setPosition(WIDTH - 70, 10);
-        text.setString(std::to_string(fps));
+        text.setString(std::to_string(fps)); 
         window.draw(text);
 
 
