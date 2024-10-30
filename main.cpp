@@ -100,6 +100,14 @@ class Fluid {
     std::vector<int> cellCount2;
     float tableSize2;
 
+    sf::VertexArray va{sf::PrimitiveType::Quads};
+
+    sf::Transform tf;
+
+    sf::Texture texture;
+
+    sf::RenderStates states;
+
 public:
     Fluid(float density, float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity) {
@@ -117,6 +125,17 @@ public:
             this->particleDensity.resize(numCells);
             this->particleColors.resize(3 * numParticles);
             std::fill(begin(particleColors), end(particleColors), 0);
+            this->va.resize(numParticles * 4);
+            texture.loadFromFile("white_circle.png");
+            auto const texture_size = static_cast<sf::Vector2f>(texture.getSize());
+            for (int index = 0; index < numParticles; ++index) {
+                int i = 4 * index;
+                va[i].texCoords = {0.f, 0.f};
+                va[i + 1].texCoords = {texture_size.x, 0.f};
+                va[i + 2].texCoords = {texture_size.x, texture_size.y};
+                va[i + 3].texCoords = {0.f, texture_size.y};
+            }
+            states.texture = &texture;
 
             this->cellSpacing = std::max(WIDTH / numX, HEIGHT / numY);
             this->invSpacing = 1.f / this->cellSpacing;
@@ -830,7 +849,7 @@ public:
                     float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
 
                     if (this->particleRestDensity > 0.f) {
-                        float k = 2.f; // 6
+                        float k = 2.5f; // 6
                         float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
                         if (compression > 0.f) {
                             divergence -= k * compression;
@@ -867,8 +886,8 @@ public:
     void includeRigidObject(const bool mouseDown, const bool justPressed, const float dt) {
         if (mouseDown) {
             int n = numY;
-            float vx = (objectX - objectPrevX) * 50;
-            float vy = (objectY - objectPrevY) * 50;
+            float vx = (objectX - objectPrevX) * 75;
+            float vy = (objectY - objectPrevY) * 75;
             for (int i = 1; i < numX - 1; i++) {
                 for (int j = 1; j < numY - 1; j++) {
                     //cellType[i * n + j] = AIR_CELL;
@@ -924,26 +943,34 @@ public:
         forceObjectQueries.clear();
     }
 
-    void drawParticles(sf::RenderWindow& window) {
-        // low of 0 high of like 100 
-        for (int i = 0; i < numParticles; ++i) {  
-            this->particleDrawer.setPosition(positions[i * 2], positions[i * 2 + 1]);
-            int vel = (int)(velocities[2 * i] * velocities[2 * i] + velocities[2 * i + 1] * velocities[2 * i + 1]) / 3000; 
-            if (vel > gradient.size()) {
-                this->particleDrawer.setFillColor(sf::Color(gradient[gradient.size() - 1][0], gradient[gradient.size() - 1][1], gradient[gradient.size() - 1][2]));
-            }
-            else {
-                this->particleDrawer.setFillColor(sf::Color(gradient[vel][0], gradient[vel][1], gradient[vel][2]));
-            }
-            //this->particleDrawer.setFillColor(sf::Color(particleColors[3 * i], particleColors[3 * i + 1], particleColors[3 * i + 2]));
-            window.draw(this->particleDrawer);
+    void updateVertexArray(int index) {
+        int i = 4 * index;
+        const float px = positions[2 * index];
+        const float py = positions[2 * index + 1];
+
+        va[i].position = {px - radius, py - radius};
+        va[i + 1].position = {px + radius, py - radius};
+        va[i + 2].position = {px + radius, py + radius};
+        va[i + 3].position = {px - radius, py + radius};
+
+        sf::Color color;
+
+        int vel = (int)(velocities[2 * index] * velocities[2 * index] + velocities[2 * index + 1] * velocities[2 * index + 1]) / 3000; 
+        if (vel > gradient.size()) {
+            color = sf::Color(gradient[gradient.size() - 1][0], gradient[gradient.size() - 1][1], gradient[gradient.size() - 1][2], 255);
+        }
+        else {
+            color = sf::Color(gradient[vel][0], gradient[vel][1], gradient[vel][2], 255);
         }
 
-        /*for (int i = 0; i < numParticles; ++i) {
-            particleColors[i * 3] = 0;
-            particleColors[i * 3 + 1] = 150;
-            particleColors[i * 3 + 2] = 255;
-        }*/
+        va[i].color = color;
+        va[i + 1].color = color;
+        va[i + 2].color = color;
+        va[i + 3].color = color;
+    }
+
+    void drawParticlesVertex(sf::RenderWindow& window) {
+        window.draw(va, states);
     }
 
     void simulate(float sdt, sf::RenderWindow& window, bool forceObjectActive, bool leftMouseDown, bool justPressed, int numPressureIters, float overRelaxation, float flipRatio, bool rightMouseDown) {
@@ -981,7 +1008,13 @@ public:
                 this->applyForceObjectForces(-1000, sdt); // pushing, -1000
             }
         }
-        this->drawParticles(window);
+
+        for (int i = 0; i < numParticles; ++i) {
+            this->updateVertexArray(i);
+        }
+
+        this->drawParticlesVertex(window);
+
         if (forceObjectActive) {
             this->drawForceObject(window);
         }
@@ -1016,7 +1049,7 @@ int main()
 {
     int WIDTH = 2000; //2000, 800
     int HEIGHT = 1000; // 800, 1300 
-    int numParticles = 10000; // 5000
+    int numParticles = 8000; // 5000
     float restitution = 0.5f;
     float gravity = 2500.f; //2500
 
@@ -1033,6 +1066,7 @@ int main()
     sf::Clock deltaClock;
 
     window.setFramerateLimit(120);
+    window.setMouseCursorVisible(false);
 
     int frame = 0;
     int fps = 0;
