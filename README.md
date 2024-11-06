@@ -7,5 +7,4 @@ In the simulate() method, just comment out the method of collision detection tha
 
 The simulation is able to run 30k particles at close to 60 fps, as you can see in the picture below.
 
-![Screenshot 2024-10-30 010439](https://github.com/user-attachments/assets/e057f33d-1b80-4e07-a6d5-76bfe07f58f9)
 ![Screenshot 2024-11-06 011221](https://github.com/user-attachments/assets/24636d32-62e4-401f-91ae-5ae7759be2c0)
