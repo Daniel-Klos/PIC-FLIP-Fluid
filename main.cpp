@@ -7,6 +7,9 @@
 #include <array>
 #include <sstream>
 #include <iomanip>
+#include <chrono>
+
+#include "thread_pool.hpp"
 
 class Fluid {
     float density;
@@ -99,6 +102,7 @@ class Fluid {
     float nY;
     std::vector<int> cellCount2;
     float tableSize2;
+    std::vector<std::vector<int>> grid;
 
     sf::VertexArray va{sf::PrimitiveType::Quads};
 
@@ -110,9 +114,22 @@ class Fluid {
 
     float k;
 
+    float timeForTransfer;
+    float timeForSeperation;
+    float timeForIncompressibility;
+
+    int numRowsPerThread;
+    int numMissedRows;
+    int numThreads = std::thread::hardware_concurrency() < 3 ? std::thread::hardware_concurrency() : 3;
+    tp::ThreadPool thread_pool;
+
+    const float colorDiffusionCoeff = 0.001f;
+
+    bool diffuseColors = false;
+
 public:
     Fluid(float density, float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k) {
+        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), thread_pool(std::thread::hardware_concurrency() < 3 ? std::thread::hardware_concurrency() : 3) {
             this->u.resize(numCells);
             this->v.resize(numCells);
             this->du.resize(numCells);
@@ -158,6 +175,10 @@ public:
             this->tableSize2 = this->nX * this->nY;
             this->cellCount2.resize(tableSize2 + 1);
 
+            this->grid.resize(tableSize2);
+
+            this->numRowsPerThread = this->nX / this->numThreads / 2;
+            this->numMissedRows = this->nX - (2 * this->numRowsPerThread * this->numThreads);
 
             // initialize particle positions
             int rowNum = std::floor(std::sqrt(numParticles));
@@ -332,7 +353,6 @@ public:
 
     void integrate(const float dt, const sf::RenderWindow& window) {
         for (int i = 0; i < this->numParticles; ++i) {
-            //this->velocities[2 * i + 1] += gravity * dt;
             this->positions[2 * i] += this->velocities[2 * i] * dt;
             this->positions[2 * i + 1] += this->velocities[2 * i + 1] * dt;
             this->velocities[2 * i + 1] += gravity * dt;
@@ -460,36 +480,37 @@ public:
         }  
     }
 
-    void makeParticleQueriesMulti(int startColumn, int endColumn) {
-        for (int c = 1; c < nX - 1; ++c) {
-            for (int r = 1; r < nY - 1; ++r) {
-                
-                // add cellSpacing to the row and column values because the sim is offset by that value
+    void initializeGrid() {
+        this->grid.clear();
+        this->grid.resize(tableSize2);
+        for (int i = 0; i < numParticles; ++i) {
+            if (positions[2 * i] > 0 && positions[2 * i] < WIDTH && positions[2 * i + 1] > 0 && positions[2 * i + 1] < HEIGHT) {
+                grid[this->getCell(positions[2 * i], positions[2 * i + 1])].push_back(i);
+            }
+        }
+    }
+
+    void makeParticleQueriesMulti(int startRow, int endRow) {
+        for (int c = startRow; c < endRow; ++c) {
+    
+            for (int r = 0; r < nY; ++r) {
+
                 int cell = r + c * nY;
-                int firstStart = this->cellCount[cell];
-                int firstEnd = this->cellCount[cell + 1];
+                
+                int numInCell = grid[cell].size();
 
-                for (int particleKey = firstStart; particleKey < firstEnd; particleKey++) {
-                    
-                    /*int particleIndex = this->particleArray[particleKey];
-
-                    particleColors[3 * particleIndex] = 0;
-                    particleColors[3 * particleIndex + 1] = 255;
-                    particleColors[3 * particleIndex + 2] = 0;
+                for (int index = 0; index < numInCell; ++index) {
+                    int particleIndex = grid[cell][index];
 
                     for (int i = -1; i < 2; ++i) {
-                        for (int j = -int(std::min(positions[2 * particleIndex + 1] / this->spacing, 1.f)); j < int(std::min(std::ceil(this->nY - positions[2 * particleIndex + 1] / this->spacing), 2.f)); ++j) {
-                            int otherCell = this->getCell(this->positions[particleIndex * 2] + i * this->spacing, this->positions[particleIndex * 2 + 1] + j * this->spacing);
-                            if (otherCell < 0 || otherCell > tableSize2 - 1) continue;
 
-                            int start = this->cellCount2[otherCell];
-                            int end = this->cellCount2[otherCell + 1];
-
-                            for (int otherParticleKey = start; otherParticleKey < end; ++otherParticleKey) {
-                                // this line is executing
-                                int otherParticleID = this->particleArray[otherParticleKey];
-
-                                // stopping here every time
+                        for (int j = -1; j < 2; ++j) {
+                            if (r + j < 0 || r + j > nY - 1 || c + i < 0 || c + i > nX - 1) continue;
+                            int otherCell = r + j + (c + i) * nY;
+                            int numInOtherCell = grid[otherCell].size();
+                            for (int otherIndex = 0; otherIndex < numInOtherCell; ++otherIndex) {
+                                int otherParticleID = grid[otherCell][otherIndex];
+                    
                                 if (otherParticleID == particleIndex) continue;
 
                                 float dx = this->positions[otherParticleID * 2] - this->positions[particleIndex * 2];
@@ -504,9 +525,50 @@ public:
                                 this->positions[2 * particleIndex + 1] -= dy;
                                 this->positions[2 * otherParticleID] += dx;
                                 this->positions[2 * otherParticleID + 1] += dy;
+
+                                if (diffuseColors) {
+                                    for (int k = 0; k < 3; k++) {
+								    	int color0 = particleColors[3 *     particleIndex + k];
+								    	int color1 = particleColors[3 *     otherParticleID + k];
+								    	int color = (color0 + color1) * 0.5;
+								    	particleColors[3 * particleIndex + k] = color0 + (color - color0) *     colorDiffusionCoeff;
+								    	particleColors[3 * otherParticleID + k] = color1 + (color - color1) *   colorDiffusionCoeff;
+								    }
+                                }
                             }
                         }
-                    }*/
+                    }
+                }
+            }
+        }
+    }
+
+    void makeForceObjectQueries3(bool forceObjectActive) {
+        if (forceObjectActive) {
+            float numCovered = std::ceil(forceObjectRadius / this->spacing);
+
+            int mouseColumn = std::floor(mouseX / this->spacing);
+            int mouseRow = std::floor(mouseY / this->spacing);
+
+            for (int i = -numCovered; i < numCovered + 1; ++i) {
+                for (int j = -numCovered; j < numCovered + 1; ++j) {
+                    int cell = this->getCell(mouseX + i * this->spacing, mouseY + j * this->spacing);
+
+                    if (mouseRow + j < 0 || mouseRow + j > nY - 1 || mouseColumn + i < 0 || mouseColumn + i > nX - 1) continue;
+                    
+                    int otherCell = mouseRow + j + (mouseColumn + i) * nY;
+                    int numInOtherCell = grid[otherCell].size();
+                    for (int otherIndex = 0; otherIndex < numInOtherCell; ++otherIndex) {
+                        int otherParticleID = grid[otherCell][otherIndex];
+
+                        float dx = this->positions[otherParticleID * 2] - mouseX;
+                        float dy = this->positions[otherParticleID * 2 + 1] - mouseY;
+                        float d2 = dx * dx + dy * dy;
+
+                        if (d2 > checkForceObjectSeperationDist || d2 == 0.0) continue;
+                        float d = std::sqrt(d2); 
+                        forceObjectQueries[otherParticleID] = d;
+                    }
                 }
             }
         }
@@ -538,6 +600,7 @@ public:
     }
 
     void makeForceObjectQueries(bool forceObjectActive) {
+        forceObjectQueries.clear();
         if (forceObjectActive) {
             // might have to make this std::max(1, ...); 
             float numCovered = int(std::ceil(forceObjectRadius / this->spacing));
@@ -944,7 +1007,7 @@ public:
         forceObjectQueries.clear();
     }
 
-    void updateVertexArray(int index) {
+    void updateVertexArrayVelocity(int index) {
         int i = 4 * index;
         const float px = positions[2 * index];
         const float py = positions[2 * index + 1];
@@ -970,6 +1033,45 @@ public:
         va[i + 3].color = color;
     }
 
+    void updateVertexArrayDiffusion(int index) {
+        const float s = 0.01f;
+
+        int i = 4 * index;
+        const float px = positions[2 * index];
+        const float py = positions[2 * index + 1];
+
+        va[i].position = {px - radius, py - radius};
+        va[i + 1].position = {px + radius, py - radius};
+        va[i + 2].position = {px + radius, py + radius};
+        va[i + 3].position = {px - radius, py + radius};
+
+        particleColors[3 * index] = clamp(this->particleColors[3 * index] - s, 0, 255);
+        particleColors[3 * index + 1] = clamp(this->particleColors[3 * index + 1] - s, 0, 255);
+        particleColors[3 * index + 2] = clamp(this->particleColors[3 * index + 2] + s, 0, 255);
+
+        const int xi = clamp(std::floor(px * invSpacing), 1, this->numX - 1);
+        const int yi = clamp(std::floor(py * invSpacing), 1, this->numY - 1);
+        const int cellNr = xi * this->numY + yi;
+
+        const float d0 = this->particleRestDensity;
+
+        if (d0 > 0.f) {
+            const float relDensity = this->particleDensity[cellNr] / d0;
+            if (relDensity < 1) { // 1.25 for 20k w/75 grid size
+                particleColors[3 * index] = 204;
+                particleColors[3 * index + 1] = 204;
+                particleColors[3 * index + 2] = 255;
+            }
+        }
+
+        sf::Color color = sf::Color(particleColors[3 * index], particleColors[3 * index + 1], particleColors[3 * index + 2]);
+
+        va[i].color = color;
+        va[i + 1].color = color;
+        va[i + 2].color = color;
+        va[i + 3].color = color;
+    }
+
     void drawParticlesVertex(sf::RenderWindow& window) {
         window.draw(va, states);
     }
@@ -978,20 +1080,58 @@ public:
 
         this->integrate(sdt, window);
 
-        this->initializeSH();
+        //this->initializeSH();
         //this->initializeSHConstantMem();
 
-        for (int i = 0; i < numParticles; ++i) {
+        //auto start = std::chrono::high_resolution_clock::now();
+
+        /*for (int i = 0; i < numParticles; ++i) {
             this->makeParticleQueries(i);
+        }*/
+
+        this->initializeGrid();
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, this, i]() {
+                this->makeParticleQueriesMulti(2 * i * numRowsPerThread, 2 * i * numRowsPerThread + numRowsPerThread);
+            });
         }
+
+        thread_pool.waitForCompletion();
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, this, i]() {
+                this->makeParticleQueriesMulti((2 * i + 1) * numRowsPerThread, (2 * i + 1) * numRowsPerThread + numRowsPerThread);
+            });
+        }
+
+        thread_pool.waitForCompletion();
+
+        this->makeParticleQueriesMulti(nX - numMissedRows, nX);
+        
+        //this->makeParticleQueriesMulti(0, nX);
+
+        //auto end = std::chrono::high_resolution_clock::now();
+        //std::chrono::duration<double> elapsed = end - start;
+
+        //timeForSeperation += elapsed.count();
+
         //this->makeParticleQueriesConstantMem(0, numParticles);
 
-        this->makeForceObjectQueries(forceObjectActive);
+        //this->makeForceObjectQueries(forceObjectActive);
+        this->makeForceObjectQueries3(forceObjectActive);
         //this->makeForceObjectQueriesConstantMem(forceObjectActive);
 
         this->constrainWalls();
 
+        //start = std::chrono::high_resolution_clock::now();
+
         this->transferVelocities(true, 0.f);
+
+        //end = std::chrono::high_resolution_clock::now();
+        //elapsed = end - start;
+
+        //timeForTransfer += elapsed.count();
 
         this->updateParticleDensity();
         if (!forceObjectActive) {
@@ -999,9 +1139,23 @@ public:
         }
         
         //this->solveIncompressibilityRedBlack(numPressureIters, overRelaxation);
+        //start = std::chrono::high_resolution_clock::now();
+
         this->solveIncompressibility(numPressureIters, overRelaxation);
+
+        //end = std::chrono::high_resolution_clock::now();
+        //elapsed = end - start;
+
+        //timeForIncompressibility += elapsed.count();
         
+        //start = std::chrono::high_resolution_clock::now();
+
         this->transferVelocities(false, flipRatio);
+
+        //end = std::chrono::high_resolution_clock::now();
+        //elapsed = end - start;
+
+        //timeForTransfer += elapsed.count();
 
         if (forceObjectActive) {
             if (leftMouseDown) {
@@ -1012,8 +1166,15 @@ public:
             }
         }
 
-        for (int i = 0; i < numParticles; ++i) {
-            this->updateVertexArray(i);
+        if (diffuseColors) {
+            for (int i = 0; i < numParticles; ++i) {
+                this->updateVertexArrayDiffusion(i);
+            }
+        }
+        else {
+            for (int i = 0; i < numParticles; ++i) {
+                this->updateVertexArrayVelocity(i);
+            }
         }
 
         this->drawParticlesVertex(window);
@@ -1052,18 +1213,48 @@ public:
     float getGravity() {
         return this->gravity;
     }
+
+    void addToDivergenceModifier(float add) {
+        this->k += add;
+    }
+
+    float getDivergenceModifier() {
+        return this->k;
+    }
+
+    float getTimeForSeperation() {
+        return this->timeForSeperation;
+    }
+
+    float getTimeForInc() {
+        return this->timeForIncompressibility;
+    }
+
+    float getTimeForTrans() {
+        return this->timeForTransfer;
+    }
+
+    void setDiffuseColors(bool newBool) {
+        this->diffuseColors = newBool;
+    }
+
+    float getDiffuseColors() {
+        return this->diffuseColors;
+    }
    
 };
 
 
 int main()
 {
+    // make gravity larger for faster seeming simulations, for 12000 particles like 6500 gravity and 9.3 divergence modifier
     int WIDTH = 2000; //wide simulation: 2000  |  tall simulation: 800
     int HEIGHT = 1000; // wide simulatoin: 1000  |  tall simulation: 1300 
-    int numParticles = 10000; 
-    float gravity = 2500.f; 
-    float modifyDivergence = 3.f; // for a wide simulation: ~3 for 10k, 4 for 20k  |  for tall: 15 for 10k 
-    float gridSize = 70; // for wide: 50-70  |  for tall: 80-90
+    int numParticles = 30000; 
+    float gravity = 3500.f; 
+    // gs 75, pc 25k : 11.3, gs 75, pc 30k : 20
+    float divergenceModifier = 11.3f; // for a wide simulation: 2.7 for 8k, ~3.5 for 10k, 3.9 for 12k, 4.7-5-7.6 for 15k  |  for tall: 15 for 10k   (also depends on grid size)
+    float gridSize = 75; // for wide: 50-70 (65)  |  for tall: 80-90
     int numPressureIters = 20; // for a wide simulation : ~20  |  for a tall simulation: ~50
 
     sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "FLIP Simulation");
@@ -1078,8 +1269,8 @@ int main()
 
     sf::Clock deltaClock;
 
-    window.setFramerateLimit(120);
-    window.setMouseCursorVisible(false);
+    //window.setFramerateLimit(120);
+    //window.setMouseCursorVisible(false);
 
     int frame = 0;
     int fps = 0;
@@ -1093,10 +1284,10 @@ int main()
     bool leftMouseDown = false;
     bool rightMouseDown = false;
 
-    Fluid fluid = Fluid(1000, WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, modifyDivergence);  //50
+    Fluid fluid = Fluid(1000, WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, divergenceModifier);  //50
 
     float overRelaxation = 1.9f;
-    float flipRatio = 0.95f;
+    float flipRatio = 0.90f;
 
     bool justPressed = false;
 
@@ -1106,6 +1297,9 @@ int main()
 
     std::ostringstream oss2;
     oss2 << std::fixed << std::setprecision(0) << gravity; 
+
+    std::ostringstream oss3;
+    oss3 << std::fixed << std::setprecision(1) << divergenceModifier; 
 
     bool forceObjectActive = true; 
 
@@ -1118,8 +1312,8 @@ int main()
         float dt = deltaTime.asSeconds();
         float sdt = dt / subStep;
 
-        /*totalDT += dt;
-        numDT++;*/
+        //totalDT += dt;
+        numDT++;
 
         sf::Event event;
         while (window.pollEvent(event))
@@ -1168,8 +1362,23 @@ int main()
                     oss2.clear();
                     oss2 << std::fixed << std::setprecision(0) << fluid.getGravity();
                 }
+                else if (event.key.code == sf::Keyboard::C) {
+                    fluid.addToDivergenceModifier(0.1);
+                    oss3.str("");  
+                    oss3.clear();
+                    oss3 << std::fixed << std::setprecision(1) << fluid.getDivergenceModifier();
+                }
+                else if (event.key.code == sf::Keyboard::D) {
+                    fluid.addToDivergenceModifier(-0.1);
+                    oss3.str("");  
+                    oss3.clear();
+                    oss3 << std::fixed << std::setprecision(1) << fluid.getDivergenceModifier();
+                }
+                else if (event.key.code == sf::Keyboard::F) {
+                    fluid.setDiffuseColors(!fluid.getDiffuseColors());
+                }
                 else if (event.key.code == sf::Keyboard::Q) {
-                    //std::cout << totalDT / numDT;
+                    //std::cout << "incompressibility time: " << fluid.getTimeForInc() / numDT << ", seperation time: " << fluid.getTimeForSeperation() / numDT << ", grid transfer time: " << fluid.getTimeForTrans() / numDT;
                     window.close();
                 }
             }
@@ -1215,6 +1424,9 @@ int main()
         text.setString(oss2.str());
         window.draw(text);
 
+        text.setPosition(WIDTH - 375, 10);
+        text.setString(oss3.str());
+        window.draw(text);
 
         window.display();
  
