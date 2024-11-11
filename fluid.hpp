@@ -186,18 +186,20 @@ public:
 
             // initialize particle positions
             int rowNum = std::floor(std::sqrt(numParticles));
+            int wideNum = rowNum * 2;
+            int highNum = rowNum * rowNum / wideNum;
 
-            int seperation = 4;
-            int starting_px = (WIDTH - (radius * seperation * rowNum)) / 2 + radius;
-            int starting_py = (HEIGHT - (radius * seperation * rowNum)) / 2 + radius;
+            float seperation = radius / 2.7f;
+            int starting_px = (WIDTH - (radius * seperation * wideNum)) / 2 + radius;
+            int starting_py = (HEIGHT - (radius * seperation * highNum)) / 2 + radius;
 
             int px = starting_px;
             int py = starting_py;
 
-            int addTo = numParticles - rowNum * rowNum;
+            int addTo = numParticles - (wideNum * highNum);
 
-            bool offset = false;
-            for (int i = 0; i < rowNum * rowNum + addTo; ++i) {
+            bool offset = true;
+            for (int i = 0; i < wideNum * highNum + addTo; ++i) {
                 this->positions[i * 2] = px;
                 this->positions[i * 2 + 1] = py;
                 this->particleColors[3 * i] = 0;
@@ -206,7 +208,7 @@ public:
 
                 px += this->radius * seperation;
 
-                if ((i + 1) % rowNum == 0) {
+                if ((i + 1) % wideNum == 0) {
                     px = starting_px;
                     if (offset) {
                         px += this->radius;
@@ -430,15 +432,15 @@ public:
     }
 
     void makeForceObjectQueries(const int32_t strength) {
-        const uint32_t numCovered = std::ceil(forceObjectRadius / scalingFactor);
+        const int32_t numCovered = std::ceil(forceObjectRadius / scalingFactor);
 
         const uint32_t mouseColumn = std::floor(mouseX / scalingFactor);
         const uint32_t mouseRow = std::floor(mouseY / scalingFactor);
 
-        for (uint32_t i = -numCovered; i < numCovered + 1; ++i) {
-            for (uint32_t j = -numCovered; j < numCovered + 1; ++j) {
-                // I DONT FUCKING KNNOW
-                if (mouseRow + i <= 1 && mouseRow + i >= scaledHEIGHT - 1 && mouseColumn <= 1 && mouseColumn >= scaledWIDTH - 1) continue;
+        for (int32_t i = -numCovered; i < numCovered + 1; ++i) {
+            for (int32_t j = -numCovered; j < numCovered + 1; ++j) {
+
+                if (mouseRow + i <= 1 || mouseRow + i >= scaledHEIGHT - 1 || mouseColumn + j <= 1 || mouseColumn + j >= scaledWIDTH - 1) continue;
 
                 const auto cell = grid.data[mouseRow + i + grid.height * (mouseColumn + j)];
 
@@ -450,8 +452,6 @@ public:
                     float d2 = dx * dx + dy * dy;
 
                     if (d2 > checkForceObjectSeperationDist || d2 == 0.0f) continue;
-
-                    std::cout << std::boolalpha << true << "\n";
 
                     float d = std::sqrt(d2);
 
@@ -1039,39 +1039,18 @@ public:
 
         this->integrate(window);
 
-        //this->initializeSH();
         //this->initializeSHConstantMem();
-
-        //auto start = std::chrono::high_resolution_clock::now();
-
-        /*for (int i = 0; i < numParticles; ++i) {
-            this->makeParticleQueries(i);
-        }*/
 
         addObjectsToGrid();
         solveCollisions();
-        
-        //this->makeParticleQueriesMulti(0, nX);
 
-        //auto end = std::chrono::high_resolution_clock::now();
-        //std::chrono::duration<double> elapsed = end - start;
-
-        //timeForSeperation += elapsed.count();
+        this->constrainWalls();
 
         //this->makeParticleQueriesConstantMem(0, numParticles);
 
         //this->makeForceObjectQueriesConstantMem(forceObjectActive);
 
-        this->constrainWalls();
-
-        //start = std::chrono::high_resolution_clock::now();
-
         this->transferVelocities(true, 0.f);
-
-        //end = std::chrono::high_resolution_clock::now();
-        //elapsed = end - start;
-
-        //timeForTransfer += elapsed.count();
 
         this->updateParticleDensity();
         if (!forceObjectActive) {
@@ -1079,30 +1058,16 @@ public:
         }
         
         //this->solveIncompressibilityRedBlack(numPressureIters, overRelaxation);
-        //start = std::chrono::high_resolution_clock::now();
-
         this->solveIncompressibility(numPressureIters, overRelaxation);
-
-        //end = std::chrono::high_resolution_clock::now();
-        //elapsed = end - start;
-
-        //timeForIncompressibility += elapsed.count();
-        
-        //start = std::chrono::high_resolution_clock::now();
 
         this->transferVelocities(false, flipRatio);
 
-        //end = std::chrono::high_resolution_clock::now();
-        //elapsed = end - start;
-
-        //timeForTransfer += elapsed.count();
-
         if (forceObjectActive) {
             if (leftMouseDown) {
-                this->makeForceObjectQueries(250); // pulling, 250
+                this->makeForceObjectQueries(-250); // pushing, -250
             }
             else if (rightMouseDown) { 
-                this->makeForceObjectQueries(-1000); // pushing, -1000
+                this->makeForceObjectQueries(1000); // pulling, 1000
             }
         }
 
