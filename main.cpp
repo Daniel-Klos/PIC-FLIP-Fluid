@@ -15,13 +15,13 @@
 int main()
 {
     // make gravity larger for faster seeming simulations, for 12000 particles like 6500 gravity and 9.3 divergence modifier
-    int numParticles = 25000; 
+    int numParticles = 15000; 
     float gravity = 4500.f; // 4500
     // gs 75, pc 25k : 11.3, gs 75, pc 30k : 20, gs 75, pc 20k : 5
-    float divergenceModifier = 13.f; // for a wide simulation: 2.7 for 8k, ~3.5 for 10k, 3.9 for 12k, 4.7-5-7.6 for 15k  |  for tall: 15 for 10k   (also depends on grid size)
-    float gridSize = 75; // for wide: 50-70 (65) (75)  |  for tall: 80-90
+    float divergenceModifier = 8.f; // 13 for a wide simulation: 2.7 for 8k, ~3.5 for 10k, 3.9 for 12k, 4.7-5-7.6 for 15k  |  for tall: 15 for 10k   (also depends on grid size)
+    float gridSize = 55; // for wide: 50-70 (65) (75)  |  for tall: 80-90
     int numPressureIters = 25; // for a wide simulation : ~20  |  for a tall simulation: ~50
-    float diffusionRatio = 0.95f; // 1.05
+    float diffusionRatio = 0.85f; // 1.05
 
     // for fullscreen
     /*sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
