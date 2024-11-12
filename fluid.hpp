@@ -84,7 +84,7 @@ class Fluid {
     float gravity;
 
     std::array<std::array<int, 3>, 100> gradient;
-    std::array<std::array<int, 3>, 4> colorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
+    std::array<std::array<int, 3>, 4> colorMap{{{0, 0, 64}, {128, 0, 128}, {255, 128, 0}, {255, 255, 0}}};
     // some nice gradients to put into colorMap:
     // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
     // night ocean: {0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
@@ -185,11 +185,10 @@ public:
             //this->grid.resize(tableSize2);
 
             // initialize particle positions
-            int rowNum = std::floor(std::sqrt(numParticles));
-            int wideNum = rowNum * 2;
-            int highNum = rowNum * rowNum / wideNum;
+            int wideNum = std::floor(WIDTH / (2 * radius));
+            int highNum = numParticles / wideNum;
 
-            float seperation = radius / 2.7f;
+            float seperation = radius / 2.36f;
             int starting_px = (WIDTH - (radius * seperation * wideNum)) / 2 + radius;
             int starting_py = (HEIGHT - (radius * seperation * highNum)) / 2 + radius;
 
@@ -412,15 +411,12 @@ public:
     {
         for (uint32_t i{0}; i < c.objects_count; ++i) {
             const uint32_t atom_idx = c.objects[i];
-            checkAtomCellCollisions(atom_idx, grid.data[index - 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height - 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height    ]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height + 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height - 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height    ]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height + 1]);
+            for (int32_t side = -1; side < 2; ++side) {
+                for (int32_t top = -1; top < 2; ++top) {
+                    if (index / grid.width + top < 0 || index / grid.width + top > grid.height || index / grid.height + side * grid.height < 0 || index / grid.height + side * grid.height > grid.width) continue;
+                    checkAtomCellCollisions(atom_idx, grid.data[index + top + (grid.height * side)]);
+                }
+            }
         }
     }
 
@@ -562,7 +558,7 @@ public:
     void makeForceObjectQueriesConstantMem(bool forceObjectActive) {
         if (forceObjectActive) {
             // might have to make this std::max(1, ...); 
-            // using cellSpacing instead of spacing just works for the constant memory hashing idk why
+            // using cellSpacing instead of spacing just works for the constant memory hashing
             float spacing = cellSpacing * 0.5;
             float numCovered = int(std::ceil(forceObjectRadius / spacing));
             for (int i = -numCovered; i < numCovered + 1; ++i) {
@@ -1040,7 +1036,6 @@ public:
         this->integrate(window);
 
         //this->initializeSHConstantMem();
-
         addObjectsToGrid();
         solveCollisions();
 
