@@ -11,7 +11,6 @@
 #include "collision_grid.hpp"
 
 class Fluid {
-    float density;
     int numX;
     int numY;
     float numCells;
@@ -32,12 +31,6 @@ class Fluid {
     std::vector<float> velocities;
     std::vector<float> particleDensity;
     float particleRestDensity = 0;
-    int tableSize;
-    int numObjects;
-    std::vector<int> cellCount;
-    std::vector<int> particleArray;
-    std::vector<int> allHashCells;
-    float spacing;
     bool interacting = false;
     int WIDTH;
     int HEIGHT;
@@ -54,11 +47,6 @@ class Fluid {
     int SOLID_CELL = 2;
 
     sf::CircleShape particleDrawer;
-    sf::RectangleShape cellDrawer;
-    sf::CircleShape uDrawer;
-    sf::CircleShape vDrawer;
-    std::vector<float> uColor;
-    std::vector<float> vColor;
 
     float objectRadius;
     float objectX;
@@ -79,12 +67,15 @@ class Fluid {
     sf::CircleShape forceObjectDrawer;
     float checkForceObjectSeperationDist;
 
+    float generatorRadius = forceObjectRadius;
+    sf::RectangleShape generatorDrawer;
+
     std::vector<int> particleColors;
 
     float gravity;
 
     std::array<std::array<int, 3>, 100> gradient;
-    std::array<std::array<int, 3>, 4> colorMap{{{0, 0, 64}, {128, 0, 128}, {255, 128, 0}, {255, 255, 0}}};
+    std::array<std::array<int, 3>, 4> colorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
     // some nice gradients to put into colorMap:
     // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
     // night ocean: {0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
@@ -98,8 +89,6 @@ class Fluid {
     // rainbow: {255, 0, 0}, {255, 255, 0}, {0, 255, 0}, {0, 200, 255} 
 
     sf::VertexArray va{sf::PrimitiveType::Quads};
-
-    sf::Transform tf;
 
     sf::Texture texture;
 
@@ -130,9 +119,26 @@ class Fluid {
 
     float dt;
 
+    bool forceObjectActive = true;
+    bool rigidObjectActive = false;
+    bool generatorActive = false;
+
+    float textureSizeX;
+    float textureSizeY;
+
+    float seperationInit;
+
+    // any variables or methods commented out are for constant memory spatial hasing 
+    /*int tableSize;
+    int numObjects;
+    std::vector<int> cellCount;
+    std::vector<int> particleArray;
+    std::vector<int> allHashCells;
+    float spacing;*/
+
 public:
-    Fluid(float density, float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, tp::ThreadPool& tp)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), thread_pool(tp) {
+    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, tp::ThreadPool& tp)
+        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), thread_pool(tp) {
 
             this->u.resize(numCells);
             this->v.resize(numCells);
@@ -160,6 +166,9 @@ public:
             }
             states.texture = &texture;
 
+            textureSizeX = texture_size.x;
+            textureSizeY = texture_size.y;
+
             this->cellSpacing = std::max(WIDTH / numX, HEIGHT / numY);
             this->invSpacing = 1.f / this->cellSpacing;
 
@@ -176,20 +185,13 @@ public:
 
             grid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
 
-            this->spacing = 2 * this->radius;
-            this->tableSize = 2 * numParticles;
-            this->cellCount.resize(this->tableSize + 1);
-            this->particleArray.resize(numParticles);
-            this->allHashCells.resize(numParticles);
+            // initializing particle positions
+            float seperation = radius / seperationInit;  // gridsize: 65: 2.5; 70: 2.3; 90: 2.f; 130: 1.2
 
-            //this->grid.resize(tableSize2);
-
-            // initialize particle positions
-            int wideNum = std::floor(WIDTH / (2 * radius));
+            int wideNum = std::floor((WIDTH - 2 * cellSpacing - 2) / (radius * seperation));
             int highNum = numParticles / wideNum;
 
-            float seperation = radius / 2.36f;
-            int starting_px = (WIDTH - (radius * seperation * wideNum)) / 2 + radius;
+            int starting_px = radius + cellSpacing + 2;//(WIDTH - (radius * seperation * wideNum)) / 2 + radius;
             int starting_py = (HEIGHT - (radius * seperation * highNum)) / 2 + radius;
 
             int px = starting_px;
@@ -226,14 +228,8 @@ public:
                 }
             }
 
-            this->colors.resize(numParticles);
-            std::fill(begin(this->colors), end(this->colors), sf::Color(0, 150, 255));
             this->moveDist = 2 * radius;
             this->checkSeperationDist = moveDist * moveDist;
-
-            this->cellDrawer.setSize(sf::Vector2f(cellSpacing, cellSpacing));
-            this->cellDrawer.setOutlineThickness(1.f);
-            this->cellDrawer.setOutlineColor(sf::Color::Black);
 
             this->objectRadius = cellSpacing * 3;
             this->objectX = std::floor(WIDTH / 2);
@@ -252,11 +248,17 @@ public:
             this->forceObjectDrawer.setOutlineColor(sf::Color::Red); 
             this->checkForceObjectSeperationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
 
+            this->generatorDrawer.setOrigin(generatorRadius, generatorRadius);
+            this->generatorDrawer.setSize(sf::Vector2f(2 * generatorRadius, 2 * generatorRadius));
+            this->generatorDrawer.setOutlineThickness(1.f);
+            this->generatorDrawer.setFillColor(sf::Color::Transparent);
+            this->generatorDrawer.setOutlineColor(sf::Color::Red); 
+
             // linearly interpolate between the values in colorMap to create a gradient array 
             float num_colors = colorMap.size() - 1; // number of colors - 1
             float num_steps = 1.f * gradient.size() / num_colors; //num_steps = 50 * key_range
             int index = 0;
-            for (int i = 0; i < num_colors; ++i) {  // Iterate over adjacent color pairs
+            for (int i = 0; i < num_colors; ++i) {  
                 for (int x = 0; x < num_steps; ++x) {
                     float t = 1.f * x / num_steps;  // Interpolation factor
                     // Linear interpolation for r, g, b values between colorMap[i] andcolorMap [i+1]
@@ -267,18 +269,12 @@ public:
                     index++;
                 }
             }
-    }
 
-private:
-
-    int hashCoords(int xi, int yi) {
-        int hash = (intCoord(xi) * 92837111) ^ (intCoord(yi) * 689287499);
-        return std::abs(hash) % this->tableSize;
-    }
-
-    int intCoord(int coord) {
-        // add 1 so that you dont get 0 for intCoord(xi) or intCoord(yi) in the hashCoords
-        return std::floor(coord / this->spacing) + 1;
+            /*this->spacing = 2 * this->radius;
+            this->tableSize = 2 * numParticles;
+            this->cellCount.resize(this->tableSize + 1);
+            this->particleArray.resize(numParticles);
+            this->allHashCells.resize(numParticles);*/
     }
 
     float clamp(float x, float min, float max) {
@@ -290,52 +286,6 @@ private:
         }
         return x;
     }
-
-    // Red-black gauss seidel implementation of solving incompressibility. 
-    // May or may not converge faster than normal iteration, I just wanted to see if it would be viable for multithreading. 
-    void solvePass(const float overRelaxation, const bool red) {
-        // First Pass: Red Cells (i + j) % 2 == 0
-        int n = numY;
-        for (int i = 1; i < this->numX - 1; ++i) {
-            for (int j = 1; j < this->numY - 1; ++j) {
-                if (red) {
-                    if ((i + j) % 2 != 0) continue; // Skip black cells
-                }
-                else {
-                    if ((i + j) % 2 == 0) continue; // Skip red cells
-                }
-                if (this->cellType[i * n + j] != FLUID_CELL) continue;
-
-                float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
-                float rightType = cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
-                float topType = cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
-                float bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
-
-                float divideBy = leftType + rightType + topType + bottomType;
-                if (divideBy == 0.f) continue;
-
-                float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
-
-                if (this->particleRestDensity > 0.f) {
-                    float k = 6.f;
-                    float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
-                    if (compression > 0.f) {
-                        divergence -= k * compression;
-                    }
-                }
-
-                float p = divergence / divideBy;
-                p *= overRelaxation;
-
-                this->u[i * n + j] += leftType * p;
-                this->u[(i + 1) * n + j] -= rightType * p;
-                this->v[i * n + j] += topType * p;
-                this->v[i * n + j + 1] -= bottomType * p;
-            }
-        }
-    }
-
-public:
 
     void createRandomPositions() {
         std::uniform_int_distribution<int> randWidth(radius, WIDTH - radius);
@@ -350,16 +300,12 @@ public:
         }
     }
 
-    void integrate(const sf::RenderWindow& window) {
-        for (int i = 0; i < this->numParticles; ++i) {
+    void integrate(const uint32_t startIndex, const uint32_t endIndex) {
+        for (int i = startIndex; i < endIndex; ++i) {
             this->positions[2 * i] += this->velocities[2 * i] * dt;
             this->positions[2 * i + 1] += this->velocities[2 * i + 1] * dt;
             this->velocities[2 * i + 1] += gravity * dt;
         }
-
-        sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
-        this->mouseX = mouse_pos.x;
-        this->mouseY = mouse_pos.y;
     }
 
     void addObjectsToGrid()
@@ -368,8 +314,8 @@ public:
         // Safety border to avoid adding object outside the grid
         uint32_t i{0};
         for (int32_t index = 0; index < numParticles; ++index) {
-            if (positions[2 * index] > scalingFactor && positions[2 * index] < WIDTH - scalingFactor &&
-                positions[2 * index + 1] > scalingFactor && positions[2 * index + 1] < HEIGHT - scalingFactor) {
+            if (positions[2 * index] > cellSpacing && positions[2 * index] < WIDTH - cellSpacing &&
+                positions[2 * index + 1] > cellSpacing && positions[2 * index + 1] < HEIGHT - cellSpacing) {
                 grid.addAtom(static_cast<int32_t>(positions[2 * index] / scalingFactor), static_cast<int32_t>(positions[2 * index + 1] / scalingFactor), i);
             }
             ++i;
@@ -411,12 +357,25 @@ public:
     {
         for (uint32_t i{0}; i < c.objects_count; ++i) {
             const uint32_t atom_idx = c.objects[i];
-            for (int32_t side = -1; side < 2; ++side) {
-                for (int32_t top = -1; top < 2; ++top) {
-                    if (index / grid.width + top < 0 || index / grid.width + top > grid.height || index / grid.height + side * grid.height < 0 || index / grid.height + side * grid.height > grid.width) continue;
-                    checkAtomCellCollisions(atom_idx, grid.data[index + top + (grid.height * side)]);
-                }
+            for (int32_t i = -1; i < 2; ++i) {
+                checkAtomCellCollisions(atom_idx, grid.data[index + i]);
             }
+            for (int32_t i = -1; i < 2; ++i) {
+                checkAtomCellCollisions(atom_idx, grid.data[index + (grid.height + i)]);
+            }
+            for (int32_t i = -1; i < 2; ++i) {
+                checkAtomCellCollisions(atom_idx, grid.data[index - (grid.height + i)]);
+            }
+            
+            /*checkAtomCellCollisions(atom_idx, grid.data[index - 1]);
+            checkAtomCellCollisions(atom_idx, grid.data[index]);
+            checkAtomCellCollisions(atom_idx, grid.data[index + 1]);
+            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height - 1]);
+            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height    ]);
+            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height + 1]);
+            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height - 1]);
+            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height    ]);
+            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height + 1]);*/
         }
     }
 
@@ -498,90 +457,8 @@ public:
         thread_pool.waitForCompletion();
     }
 
-    void initializeSHConstantMem() {
-
-        std::fill(this->cellCount.begin(), this->cellCount.end(), 0);
-        std::fill(this->allHashCells.begin(), this->allHashCells.end(), 0);
-        std::fill(this->particleArray.begin(), this->particleArray.end(), 0);
-        // initialize cells in cellCount
-        for (int i = 0; i < this->numParticles; ++i) {
-            int hashedCell = hashCoords(this->positions[i * 2], this->positions[i * 2 + 1]);
-            this->allHashCells[i] = hashedCell;
-            this->cellCount[hashedCell]++;
-        }
-       
-        // calc partial sum
-        int sum = 0;
-        for (int i = 0; i < this->tableSize; ++i) {
-            sum += this->cellCount[i];
-            this->cellCount[i] = sum;
-        }
-        this->cellCount[this->tableSize] = sum;
-       
-        // fill particle array
-        for (int i = 0; i < this->numParticles; ++i) {
-            int hashedCell = this->allHashCells[i];
-            cellCount[hashedCell]--;
-            particleArray[cellCount[hashedCell]] = i;
-        }
-    }
-
-    void makeParticleQueriesConstantMem(int startIndex, int endIndex) {
-        for (int c = startIndex; c < endIndex; ++c) {
-            for (int i = -1; i < 2; ++i) {
-                for (int j = -1; j < 2; ++j) {
-                    int hashedCell = this->hashCoords(this->positions[c * 2] + i * this->spacing, this->positions[c * 2 + 1] + j * this->spacing * 0.5);
-                    int start = this->cellCount[hashedCell];
-                    int end = this->cellCount[hashedCell + 1];
-                    for (int p = start; p < end; ++p) {
-                        int otherParticleID = this->particleArray[p];
-                        if (otherParticleID == c) continue;
-
-                        float dx = this->positions[otherParticleID * 2] - this->positions[c * 2];
-                        float dy = this->positions[otherParticleID * 2 + 1] - this->positions[c * 2 + 1];
-                        float d2 = dx * dx + dy * dy;
-                        if (d2 > checkSeperationDist || d2 == 0.0) continue;
-                        float d = std::sqrt(d2); 
-                        float s = 0.5 * (moveDist - d) / d;
-                        dx *= s;
-                        dy *= s;
-                        this->positions[2 * c] -= dx;
-                        this->positions[2 * c + 1] -= dy;
-                        this->positions[2 * otherParticleID] += dx;
-                        this->positions[2 * otherParticleID + 1] += dy;
-                    }
-                }
-            }
-        }
-    }
-
-    void makeForceObjectQueriesConstantMem(bool forceObjectActive) {
-        if (forceObjectActive) {
-            // might have to make this std::max(1, ...); 
-            // using cellSpacing instead of spacing just works for the constant memory hashing
-            float spacing = cellSpacing * 0.5;
-            float numCovered = int(std::ceil(forceObjectRadius / spacing));
-            for (int i = -numCovered; i < numCovered + 1; ++i) {
-                for (int j = -numCovered; j < numCovered + 1; ++j) {
-                    int hashedCell = this->hashCoords(mouseX + i * spacing, mouseY + j * spacing);
-                    int start = this->cellCount[hashedCell];
-                    int end = this->cellCount[hashedCell + 1];
-                    for (int p = start; p < end; ++p) {
-                        int otherParticleID = this->particleArray[p];
-                        float dx = this->positions[otherParticleID * 2] - mouseX;
-                        float dy = this->positions[otherParticleID * 2 + 1] - mouseY;
-                        float d2 = dx * dx + dy * dy;
-                        if (d2 > checkForceObjectSeperationDist || d2 == 0.0) continue;
-                        float d = std::sqrt(d2);
-                        forceObjectQueries[otherParticleID] = d;
-                    }
-                }
-            }
-        }
-    }
-
-    void constrainWalls() {
-        for (int i = 0; i < numParticles; ++i) {
+    void constrainWalls(const uint32_t startIndex, const uint32_t endIndex) {
+        for (int i = startIndex; i < endIndex; ++i) {
             if (this->positions[2 * i] - radius < this->cellSpacing) {
                 this->positions[2 * i] = radius + this->cellSpacing;
                 if (this->velocities[2 * i] < 0) {
@@ -881,21 +758,6 @@ public:
         }
     }
 
-    // would need a gigantic grid for incompressibility multithreading to be viable 
-    void solveIncompressibilityRedBlack(const int numIters, const float overRelaxation) {
-        std::fill(begin(this->p), end(this->p), 0);
-
-        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
-        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
-
-
-        for (int iter = 0; iter < numIters; ++iter) {
-            this->solvePass(overRelaxation, true);
-
-            this->solvePass(overRelaxation, false);
-        }
-    }
-
     void includeRigidObject(const bool mouseDown, const bool justPressed) {
         if (mouseDown) {
             int n = numY;
@@ -936,6 +798,52 @@ public:
     void drawRigidObject(sf::RenderWindow& window) {
         this->objectDrawer.setPosition(objectX, objectY);
         window.draw(this->objectDrawer);
+    }
+
+    void generate(int32_t numParts) {
+        this->positions.resize(numParticles + numParts);
+        this->velocities.resize(numParticles + numParts);
+        this->va.resize(4 * (numParticles + numParts));
+        this->particleColors.resize(3 * (numParticles + numParts));
+        for (int index = numParticles; index < numParticles + numParts; ++index) {
+            int i = 4 * index;
+            va[i].texCoords = {0.f, 0.f};
+            va[i + 1].texCoords = {textureSizeX, 0.f};
+            va[i + 2].texCoords = {textureSizeX, textureSizeY};
+            va[i + 3].texCoords = {0.f, textureSizeY};
+        }
+
+        int wideNum = std::floor((2 * generatorRadius) / (2 * radius));
+        int highNum = numParts / wideNum;
+        float seperation = radius / 2.36f;
+        int starting_px = mouseX - generatorRadius + radius;
+        int starting_py = mouseY - generatorRadius + radius;
+        int px = starting_px;
+        int py = starting_py;
+        int addTo = numParts - (wideNum * highNum);
+        bool offset = true;
+        for (int i = 0; i < wideNum * highNum + addTo; ++i) {
+            this->positions[(i + numParticles) * 2] = px;
+            this->positions[(i + numParticles) * 2 + 1] = py;
+            this->velocities[(i + numParticles) * 2] = 0.f;
+            this->velocities[(i + numParticles) * 2 + 1] = 0.f;
+            px += this->radius * seperation;
+            if ((i + 1) % wideNum == 0) {
+                px = starting_px;
+                if (offset) {
+                    px += this->radius;
+                }
+                py += this->radius * seperation;
+                offset = !offset;
+            }
+        }
+
+        numParticles += numParts;
+    }
+
+    void drawGenerator(sf::RenderWindow& window) {
+        generatorDrawer.setPosition(mouseX, mouseY);
+        window.draw(generatorDrawer);
     }
 
     void applyForceObjectForces(float strength, float dt) {
@@ -1029,17 +937,67 @@ public:
         window.draw(va, states);
     }
 
-    void simulate(float dt_, sf::RenderWindow& window, bool forceObjectActive, bool leftMouseDown, bool justPressed, int numPressureIters, float overRelaxation, float flipRatio, bool rightMouseDown) {
+    void simulate(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, int numPressureIters, float overRelaxation, float flipRatio, bool rightMouseDown) {
 
         dt = dt_;
 
-        this->integrate(window);
+        sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
+        this->mouseX = mouse_pos.x;
+        this->mouseY = mouse_pos.y;
+
+        const bool mouseDown = leftMouseDown || rightMouseDown;
+
+        if (generatorActive && mouseDown) {
+            if (leftMouseDown) {
+                this->generate(1);
+            }
+            /*else {
+                this->remove();
+            }*/
+        }
+
+        const uint32_t numThreads = thread_pool.m_thread_count;
+        const uint32_t particlesPerThread = numParticles / numThreads;
+        const uint32_t numMissedParticles = numParticles - numThreads * particlesPerThread;
+
+        /*for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->integrate(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+            });
+        }
+
+        this->integrate(numParticles - numMissedParticles, numParticles);
+
+        thread_pool.waitForCompletion();*/
+
+        this->integrate(0, numParticles);
 
         //this->initializeSHConstantMem();
         addObjectsToGrid();
+
+        // don't worry about this messing up the positions of the particles in relation to the grid; this only modifies their velocities
+        if (forceObjectActive && mouseDown) {
+            if (leftMouseDown) {
+                this->makeForceObjectQueries(-250); // pulling, -250
+            }
+            else { 
+                this->makeForceObjectQueries(1000); // pushing, 1000
+            }
+        }
+
         solveCollisions();
 
-        this->constrainWalls();
+        constrainWalls(0, numParticles);
+
+        /*for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->constrainWalls(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+            });
+        }
+
+        this->constrainWalls(numParticles - numMissedParticles, numParticles);
+
+        thread_pool.waitForCompletion();*/
 
         //this->makeParticleQueriesConstantMem(0, numParticles);
 
@@ -1048,7 +1006,7 @@ public:
         this->transferVelocities(true, 0.f);
 
         this->updateParticleDensity();
-        if (!forceObjectActive) {
+        if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
         
@@ -1056,19 +1014,6 @@ public:
         this->solveIncompressibility(numPressureIters, overRelaxation);
 
         this->transferVelocities(false, flipRatio);
-
-        if (forceObjectActive) {
-            if (leftMouseDown) {
-                this->makeForceObjectQueries(-250); // pushing, -250
-            }
-            else if (rightMouseDown) { 
-                this->makeForceObjectQueries(1000); // pulling, 1000
-            }
-        }
-
-        const uint32_t numThreads = thread_pool.m_thread_count;
-        const uint32_t particlesPerThread = numParticles / numThreads;
-        const uint32_t numMissedParticles = numParticles - numThreads * particlesPerThread;
 
         if (diffuseColors) {
             for (int i = 0; i < numThreads; ++i) {
@@ -1098,18 +1043,11 @@ public:
         if (forceObjectActive) {
             this->drawForceObject(window);
         }
-        else {
+        else if (rigidObjectActive) {
             this->drawRigidObject(window);
         }
-    }
-
-    void drawHashNums(sf::RenderWindow& window, sf::Text& text) {
-        for (int i = 0; i < WIDTH; i += this->spacing) {
-            for (int j = 0; j < HEIGHT; j += this->spacing) {
-                text.setPosition(i, j);
-                text.setString(std::to_string(this->hashCoords(i, j)));
-                window.draw(text);
-            }
+        else if (generatorActive) {
+            this->drawGenerator(window);
         }
     }
 
@@ -1119,6 +1057,14 @@ public:
             this->forceObjectDrawer.setOrigin(forceObjectRadius, forceObjectRadius);
             this->forceObjectDrawer.setRadius(forceObjectRadius);
             this->checkForceObjectSeperationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
+        }
+    }
+
+    void addToGeneratorRadius(float add) {
+        if (generatorRadius + add > 0) {
+            this->generatorRadius += add;
+            this->generatorDrawer.setOrigin(generatorRadius, generatorRadius);
+            this->generatorDrawer.setSize(sf::Vector2f(2 * generatorRadius, 2 * generatorRadius));
         }
     }
 
@@ -1157,5 +1103,179 @@ public:
     float getDiffuseColors() {
         return this->diffuseColors;
     }
+
+    void setForceObjectActive(bool active) {
+        this->forceObjectActive = active;
+    }
+
+    void setGeneratorActive(bool active) {
+        this->generatorActive = active;
+    }
+
+    void setRigidObjectActive(bool active) {
+        this->rigidObjectActive = active;
+    }
+
+    /*void initializeSHConstantMem() {
+
+        std::fill(this->cellCount.begin(), this->cellCount.end(), 0);
+        std::fill(this->allHashCells.begin(), this->allHashCells.end(), 0);
+        std::fill(this->particleArray.begin(), this->particleArray.end(), 0);
+        // initialize cells in cellCount
+        for (int i = 0; i < this->numParticles; ++i) {
+            int hashedCell = hashCoords(this->positions[i * 2], this->positions[i * 2 + 1]);
+            this->allHashCells[i] = hashedCell;
+            this->cellCount[hashedCell]++;
+        }
+       
+        // calc partial sum
+        int sum = 0;
+        for (int i = 0; i < this->tableSize; ++i) {
+            sum += this->cellCount[i];
+            this->cellCount[i] = sum;
+        }
+        this->cellCount[this->tableSize] = sum;
+       
+        // fill particle array
+        for (int i = 0; i < this->numParticles; ++i) {
+            int hashedCell = this->allHashCells[i];
+            cellCount[hashedCell]--;
+            particleArray[cellCount[hashedCell]] = i;
+        }
+    }
+
+    void makeParticleQueriesConstantMem(int startIndex, int endIndex) {
+        for (int c = startIndex; c < endIndex; ++c) {
+            for (int i = -1; i < 2; ++i) {
+                for (int j = -1; j < 2; ++j) {
+                    int hashedCell = this->hashCoords(this->positions[c * 2] + i * this->spacing, this->positions[c * 2 + 1] + j * this->spacing * 0.5);
+                    int start = this->cellCount[hashedCell];
+                    int end = this->cellCount[hashedCell + 1];
+                    for (int p = start; p < end; ++p) {
+                        int otherParticleID = this->particleArray[p];
+                        if (otherParticleID == c) continue;
+
+                        float dx = this->positions[otherParticleID * 2] - this->positions[c * 2];
+                        float dy = this->positions[otherParticleID * 2 + 1] - this->positions[c * 2 + 1];
+                        float d2 = dx * dx + dy * dy;
+                        if (d2 > checkSeperationDist || d2 == 0.0) continue;
+                        float d = std::sqrt(d2); 
+                        float s = 0.5 * (moveDist - d) / d;
+                        dx *= s;
+                        dy *= s;
+                        this->positions[2 * c] -= dx;
+                        this->positions[2 * c + 1] -= dy;
+                        this->positions[2 * otherParticleID] += dx;
+                        this->positions[2 * otherParticleID + 1] += dy;
+                    }
+                }
+            }
+        }
+    }
+
+    void makeForceObjectQueriesConstantMem(bool forceObjectActive) {
+        if (forceObjectActive) {
+            // might have to make this std::max(1, ...); 
+            // using cellSpacing instead of spacing just works for the constant memory hashing
+            float spacing = cellSpacing * 0.5;
+            float numCovered = int(std::ceil(forceObjectRadius / spacing));
+            for (int i = -numCovered; i < numCovered + 1; ++i) {
+                for (int j = -numCovered; j < numCovered + 1; ++j) {
+                    int hashedCell = this->hashCoords(mouseX + i * spacing, mouseY + j * spacing);
+                    int start = this->cellCount[hashedCell];
+                    int end = this->cellCount[hashedCell + 1];
+                    for (int p = start; p < end; ++p) {
+                        int otherParticleID = this->particleArray[p];
+                        float dx = this->positions[otherParticleID * 2] - mouseX;
+                        float dy = this->positions[otherParticleID * 2 + 1] - mouseY;
+                        float d2 = dx * dx + dy * dy;
+                        if (d2 > checkForceObjectSeperationDist || d2 == 0.0) continue;
+                        float d = std::sqrt(d2);
+                        forceObjectQueries[otherParticleID] = d;
+                    }
+                }
+            }
+        }
+    }
+
+    // would need a gigantic grid for incompressibility multithreading to be viable 
+    void solveIncompressibilityRedBlack(const int numIters, const float overRelaxation) {
+        std::fill(begin(this->p), end(this->p), 0);
+
+        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
+        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
+
+
+        for (int iter = 0; iter < numIters; ++iter) {
+            this->solvePass(overRelaxation, true);
+
+            this->solvePass(overRelaxation, false);
+        }
+    }
+    
+    void drawHashNums(sf::RenderWindow& window, sf::Text& text) {
+        for (int i = 0; i < WIDTH; i += this->spacing) {
+            for (int j = 0; j < HEIGHT; j += this->spacing) {
+                text.setPosition(i, j);
+                text.setString(std::to_string(this->hashCoords(i, j)));
+                window.draw(text);
+            }
+        }
+    }
+    
+    
+    /*int hashCoords(int xi, int yi) {
+        int hash = (intCoord(xi) * 92837111) ^ (intCoord(yi) * 689287499);
+        return std::abs(hash) % this->tableSize;
+    }
+
+    int intCoord(int coord) {
+        // add 1 so that you dont get 0 for intCoord(xi) or intCoord(yi) in the hashCoords
+        return std::floor(coord / this->spacing) + 1;
+    }*/
+
+    // Red-black gauss seidel implementation of solving incompressibility. 
+    // May or may not converge faster than normal iteration, I just wanted to see if it would be viable for multithreading. 
+    /*void solvePass(const float overRelaxation, const bool red) {
+        // First Pass: Red Cells (i + j) % 2 == 0
+        int n = numY;
+        for (int i = 1; i < this->numX - 1; ++i) {
+            for (int j = 1; j < this->numY - 1; ++j) {
+                if (red) {
+                    if ((i + j) % 2 != 0) continue; // Skip black cells
+                }
+                else {
+                    if ((i + j) % 2 == 0) continue; // Skip red cells
+                }
+                if (this->cellType[i * n + j] != FLUID_CELL) continue;
+
+                float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
+                float rightType = cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
+                float topType = cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
+                float bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
+
+                float divideBy = leftType + rightType + topType + bottomType;
+                if (divideBy == 0.f) continue;
+
+                float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
+
+                if (this->particleRestDensity > 0.f) {
+                    float k = 6.f;
+                    float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
+                    if (compression > 0.f) {
+                        divergence -= k * compression;
+                    }
+                }
+
+                float p = divergence / divideBy;
+                p *= overRelaxation;
+
+                this->u[i * n + j] += leftType * p;
+                this->u[(i + 1) * n + j] -= rightType * p;
+                this->v[i * n + j] += topType * p;
+                this->v[i * n + j + 1] -= bottomType * p;
+            }
+        }
+    }*/
    
 };
