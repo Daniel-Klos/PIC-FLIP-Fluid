@@ -7,29 +7,62 @@
 #include <array>
 #include <sstream>
 #include <iomanip>
-#include <chrono>
 #include <thread>
 
 #include "fluid.hpp"
 
 int main()
 {
-    // make gravity larger for faster seeming simulations, for 12000 particles like 6500 gravity and 9.3 divergence modifier
-    int numParticles = 15000; 
-    float gravity = 4500.f; // 4500
-    // gs 75, pc 25k : 11.3, gs 75, pc 30k : 20, gs 75, pc 20k : 5
-    float divergenceModifier = 8.f; // 13 for a wide simulation: 2.7 for 8k, ~3.5 for 10k, 3.9 for 12k, 4.7-5-7.6 for 15k  |  for tall: 15 for 10k   (also depends on grid size)
-    float gridSize = 55; // for wide: 50-70 (65) (75)  |  for tall: 80-90
-    int numPressureIters = 25; // for a wide simulation : ~20  |  for a tall simulation: ~50
-    float diffusionRatio = 0.85f; // 1.05
+    // Adjust the sim to a good size for you! Note that if you change these numbers, you will have to change the settings!
+    int WIDTH = 2500; 
+    int HEIGHT = 1300; 
+
+    // SETTINGS
+    // ---------------------------------------
+
+    // 1) space
+    /*int numParticles = 1000; 
+    float gravity = 0.f; 
+    float divergenceModifier = 15.f; 
+    float gridSize = 90.f; 
+    int numPressureIters = 30; 
+    float diffusionRatio = 0.8f;
+    float flipRatio = 0.8f;*/
+
+    // 2) casual
+    int numParticles = 10000; 
+    float gravity = 4700.f; 
+    float divergenceModifier = 4.5f; 
+    float gridSize = 65.f; 
+    int numPressureIters = 25; 
+    float diffusionRatio = 1.05f; 
+    float flipRatio = 0.9f;
+    float seperationInit = 2.5f;
+
+    // 3) lots
+    /*int numParticles = 25000; 
+    float gravity = 4700.f; 
+    float divergenceModifier = 15.5f; 
+    float gridSize = 75.f; 
+    int numPressureIters = 25; 
+    float diffusionRatio = 0.95f; 
+    float flipRatio = 0.9f;*/
+
+    // 4) fire hazard
+    /*int numParticles = 30000; 
+    float gravity = 4500.f; 
+    float divergenceModifier = 
+    float gridSize = 90.f; 
+    int numPressureIters = 30;
+    float diffusionRatio = 0.9f; 
+    float flipRatio = 0.80f;*/
+
+    // -------------------------------------------
 
     // for fullscreen
     /*sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
     int WIDTH = desktopMode.width;
     int HEIGHT = desktopMode.height;*/
-
-    int WIDTH = 2500; //wide simulation: 2000  |  tall simulation: 800
-    int HEIGHT = 1000; // wide simulatoin: 1000  |  tall simulation: 1300 
 
     sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "FLIP Simulation");
 
@@ -58,14 +91,13 @@ int main()
 
     const uint32_t maxThreads = std::thread::hardware_concurrency();
 
-    const uint32_t numThreads = maxThreads < 10 ? maxThreads : 10;
+    const uint32_t numThreads = maxThreads < 11 ? maxThreads : 11;
 
     tp::ThreadPool thread_pool(numThreads);
 
-    Fluid fluid = Fluid(1000, WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, divergenceModifier, diffusionRatio, thread_pool);  //50
+    Fluid fluid = Fluid(WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, divergenceModifier, diffusionRatio, seperationInit, thread_pool);  //50
 
-    float overRelaxation = 1.91f;
-    float flipRatio = 0.90f;
+    const float overRelaxation = 1.91f;
 
     bool justPressed = false;
 
@@ -116,16 +148,27 @@ int main()
                     }
                 }
                 else if (event.key.code == sf::Keyboard::Num1) {
-                    forceObjectActive = false;
+                    fluid.setRigidObjectActive(true);
+                    fluid.setForceObjectActive(false);
+                    fluid.setGeneratorActive(false);
                 }
                 else if (event.key.code == sf::Keyboard::Num2) {
-                    forceObjectActive = true;
+                    fluid.setRigidObjectActive(false);
+                    fluid.setForceObjectActive(true);
+                    fluid.setGeneratorActive(false);
+                }
+                else if (event.key.code == sf::Keyboard::Num3) {
+                    fluid.setRigidObjectActive(false);
+                    fluid.setForceObjectActive(false);
+                    fluid.setGeneratorActive(true);
                 }
                 else if (event.key.code == sf::Keyboard::T) {
-                    fluid.addToForceObjectRadius(3);
+                    fluid.addToForceObjectRadius(10);
+                    fluid.addToGeneratorRadius(10);
                 }
                 else if (event.key.code == sf::Keyboard::R) {
-                    fluid.addToForceObjectRadius(-3);
+                    fluid.addToForceObjectRadius(-10);
+                    fluid.addToGeneratorRadius(-10);
                 }
                 else if (event.key.code == sf::Keyboard::G) {
                     fluid.addToGravity(100);
@@ -180,7 +223,7 @@ int main()
 
         window.clear();
 
-        fluid.simulate(dt, window, forceObjectActive, leftMouseDown, justPressed, numPressureIters, overRelaxation, flipRatio, rightMouseDown);
+        fluid.simulate(dt, window, leftMouseDown, justPressed, numPressureIters, overRelaxation, flipRatio, rightMouseDown);
 
         frame++;
         if (frame == 30) {
