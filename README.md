@@ -1,5 +1,5 @@
 # PIC-FLIP-Fluid
-A particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. 
+A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. 
 
 There are two different types of collision detection available, one which uses constant memory for every grid size, and another which increases the amount of memory used when the grid size is increased. For the most speed, use non-constant memory collision detection, as it is multithreaded, but if changing the grid size (not the amount of particles) during runtime with no change in memory is a must then go for constant memory.
 In the simulate() method, just comment out the method of collision detection that you don't want to use.
