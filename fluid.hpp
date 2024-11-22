@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <random>
 #include <array>
+#include <chrono>
 
 #include "thread_pool.hpp"
 #include "collision_grid.hpp"
@@ -128,6 +129,8 @@ class Fluid {
 
     float seperationInit;
 
+    float vorticityStrength;
+
     // any variables or methods commented out are for constant memory spatial hasing 
     /*int tableSize;
     int numObjects;
@@ -137,8 +140,8 @@ class Fluid {
     float spacing;*/
 
 public:
-    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, tp::ThreadPool& tp)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), thread_pool(tp) {
+    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, float vorticityStrength_, tp::ThreadPool& tp)
+        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), vorticityStrength(vorticityStrength_), thread_pool(tp) {
 
             this->u.resize(numCells);
             this->v.resize(numCells);
@@ -191,11 +194,11 @@ public:
             int wideNum = std::floor((WIDTH - 2 * cellSpacing - 2) / (radius * seperation));
             int highNum = numParticles / wideNum;
 
-            int starting_px = radius + cellSpacing + 2;//(WIDTH - (radius * seperation * wideNum)) / 2 + radius;
-            int starting_py = (HEIGHT - (radius * seperation * highNum)) / 2 + radius;
+            float starting_px = radius + cellSpacing + 2;//(WIDTH - (radius * seperation * wideNum)) / 2 + radius;
+            float starting_py = (HEIGHT - (radius * seperation * highNum)) / 2 + radius;
 
-            int px = starting_px;
-            int py = starting_py;
+            float px = starting_px;
+            float py = starting_py;
 
             int addTo = numParticles - (wideNum * highNum);
 
@@ -366,16 +369,6 @@ public:
             for (int32_t i = -1; i < 2; ++i) {
                 checkAtomCellCollisions(atom_idx, grid.data[index - (grid.height + i)]);
             }
-            
-            /*checkAtomCellCollisions(atom_idx, grid.data[index - 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height - 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height    ]);
-            checkAtomCellCollisions(atom_idx, grid.data[index + grid.height + 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height - 1]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height    ]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height + 1]);*/
         }
     }
 
@@ -721,11 +714,11 @@ public:
         std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
         std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
 
-        int n = this->numY;
+        const int32_t n = this->numY;
 
-        for (int iter = 0; iter < numIters; ++iter) {
-            for (int i = 1; i < this->numX - 1; ++i) {
-                for (int j = 1; j < this->numY - 1; ++j) {
+        for (int32_t iter = 0; iter < numIters; ++iter) {
+            for (int32_t i = 1; i < this->numX - 1; ++i) {
+                for (int32_t j = 1; j < this->numY - 1; ++j) {
                     if (this->cellType[i * n + j] != FLUID_CELL) continue;
                     // <= AIR_CELL just means "is either fluid or air cell" look at the constants
                     float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
@@ -756,6 +749,67 @@ public:
                 }
             }
         }
+    }
+
+    float curl(int i, int j) {
+        const int32_t n = this->numY;
+        const int32_t leftType = cellType[(i - 2) * n + j] == FLUID_CELL;
+        const int32_t rightType = cellType[(i + 1) * n + j] == FLUID_CELL;
+        const int32_t topType = cellType[i * n + j - 2] == FLUID_CELL;
+        const int32_t bottomType = cellType[i * n + j + 1] == FLUID_CELL;
+        return (this->v[i * n + j + 1] * bottomType - this->v[i * n + j - 1] * topType) * 0.5f - (this->u[(i + 1) * n + j] * rightType - this->u[(i - 1) * n + j] * leftType) * 0.5f;
+    }
+
+    void applyVorticityConfinementPass(bool red, int32_t startColumn, int32_t endColumn) {
+        const int32_t n = this->numY;
+        for (int32_t i = startColumn; i < endColumn; ++i) {
+            for (int32_t j = 1; j < numY - 1; ++j) {
+                if (red) {
+                    if ((i + j) % 2 != 0) continue; // Skip black cells
+                }
+                else {
+                    if ((i + j) % 2 == 0) continue; // Skip red cells
+                }
+                float dx = abs(curl(i, j - 1)) - abs(curl(i, j + 1));
+                float dy = abs(curl(i + 1, j)) - abs(curl(i - 1, j));
+
+                const float len = std::sqrt(dx * dx + dy * dy) + 0.000001f; 
+
+                dx /= len;
+                dy /= len; 
+
+                const float c = curl(i, j);
+
+                this->v[i * n + j] += c * dx * dt * vorticityStrength;
+                this->u[i * n + j] += c * dy * dt * vorticityStrength;
+            }
+        }
+    }
+
+    void calcVorticityConfinementRedBlack() {
+        const int32_t numThreads = thread_pool.m_thread_count;
+        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
+        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->applyVorticityConfinementPass(true, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+            });
+        }
+
+        this->applyVorticityConfinementPass(true, numX - 1 - numMissedColumns, numX - 1);
+
+        thread_pool.waitForCompletion();
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->applyVorticityConfinementPass(false, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+            });
+        }
+
+        this->applyVorticityConfinementPass(false, numX - 1 - numMissedColumns, numX - 1);
+
+        thread_pool.waitForCompletion();
     }
 
     void includeRigidObject(const bool mouseDown, const bool justPressed) {
@@ -877,7 +931,7 @@ public:
 
             sf::Color color;
 
-            int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 5000; 
+            int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 7000; 
             if (vel > gradient.size()) {
                 color = sf::Color(gradient[gradient.size() - 1][0],     gradient[gradient.size() - 1][1], gradient[gradient.    size() - 1][2], 255);
             }
@@ -1013,6 +1067,8 @@ public:
         //this->solveIncompressibilityRedBlack(numPressureIters, overRelaxation);
         this->solveIncompressibility(numPressureIters, overRelaxation);
 
+        this->calcVorticityConfinementRedBlack();
+
         this->transferVelocities(false, flipRatio);
 
         if (diffuseColors) {
@@ -1026,6 +1082,7 @@ public:
 
             thread_pool.waitForCompletion();
         }
+
         else {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
@@ -1082,6 +1139,14 @@ public:
 
     float getDivergenceModifier() {
         return this->k;
+    }
+
+    void addToVorticityStrength(float add) {
+        this->vorticityStrength += add;
+    }
+
+    float getVorticityStrength() {
+        return this->vorticityStrength;
     }
 
     float getTimeForSeperation() {
