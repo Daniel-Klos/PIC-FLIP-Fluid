@@ -30,14 +30,15 @@ int main()
     float flipRatio = 0.8f;*/
 
     // 2) casual
-    int numParticles = 10000; 
-    float gravity = 4700.f; 
-    float divergenceModifier = 4.5f; 
-    float gridSize = 65.f; 
+    int numParticles = 15000; 
+    float gravity = 5500.f; 
+    float divergenceModifier = 8.5f; 
+    float gridSize = 70.f; 
     int numPressureIters = 25; 
-    float diffusionRatio = 1.05f; 
+    float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;
-    float seperationInit = 2.5f;
+    float seperationInit = 2.7f;
+    float vorticityStrength = 2.f; // messes with the grid in some irreversible way at the start of the sim if set to anything > 0
 
     // 3) lots
     /*int numParticles = 25000; 
@@ -48,7 +49,7 @@ int main()
     float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;*/
 
-    // 4) fire hazard
+    // 4) a lot
     /*int numParticles = 30000; 
     float gravity = 4500.f; 
     float divergenceModifier = 
@@ -56,6 +57,16 @@ int main()
     int numPressureIters = 30;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;*/
+
+    // fire hazard (set dt to a fixed amount for this aint no way this is running in real time)
+    /*int numParticles = 50000; 
+    float gravity = 4700.f; 
+    float divergenceModifier = 8.5f; 
+    float gridSize = 120.f; 
+    int numPressureIters = 25; 
+    float diffusionRatio = 1.05f; 
+    float flipRatio = 0.9f;
+    float seperationInit = 1.55f;*/
 
     // -------------------------------------------
 
@@ -95,7 +106,7 @@ int main()
 
     tp::ThreadPool thread_pool(numThreads);
 
-    Fluid fluid = Fluid(WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, divergenceModifier, diffusionRatio, seperationInit, thread_pool);  //50
+    Fluid fluid = Fluid(WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, divergenceModifier, diffusionRatio, seperationInit, vorticityStrength, thread_pool);  //50
 
     const float overRelaxation = 1.91f;
 
@@ -110,6 +121,9 @@ int main()
 
     std::ostringstream oss3;
     oss3 << std::fixed << std::setprecision(1) << divergenceModifier; 
+
+    std::ostringstream oss4;
+    oss4 << std::fixed << std::setprecision(1) << vorticityStrength; 
 
     bool forceObjectActive = true; 
 
@@ -145,6 +159,20 @@ int main()
                         oss.str("");  
                         oss.clear();
                         oss << std::fixed << std::setprecision(2) << flipRatio;
+                    }
+                }
+                if (event.key.code == sf::Keyboard::E) {
+                    vorticityStrength += 0.5;
+                    oss4.str("");  
+                    oss4.clear();
+                    oss4 << std::fixed << std::setprecision(1) << vorticityStrength; 
+                }
+                else if (event.key.code == sf::Keyboard::W) {
+                    if (vorticityStrength - 0.5 > 0.f) {
+                        vorticityStrength -= 0.5;
+                        oss4.str("");  
+                        oss4.clear();
+                        oss4 << std::fixed << std::setprecision(1) << vorticityStrength;
                     }
                 }
                 else if (event.key.code == sf::Keyboard::Num1) {
@@ -246,6 +274,10 @@ int main()
 
         text.setPosition(WIDTH - 375, 10);
         text.setString(oss3.str());
+        window.draw(text);
+
+        text.setPosition(WIDTH - 475, 10);
+        text.setString(oss4.str());
         window.draw(text);
 
         window.display();
