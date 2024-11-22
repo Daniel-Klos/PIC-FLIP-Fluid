@@ -13,7 +13,7 @@ Controls:
 -   Press f to switch between velocity rendering and diffusion rendering
 -   Press q to exit the simulation
 
-This implementation includes vorticity confinement.
+This implementation also includes vorticity confinement.
 
 The simulation is able to run 30k particles at around 80 fps, as you can see in the pictures below.
 
