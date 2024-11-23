@@ -81,6 +81,7 @@ class Fluid {
     // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
     // night ocean: {0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
     // sunset: {0, 0, 64}, {128, 0, 128}, {255, 128, 0}, {255, 255, 0}
+    // brighter sunset: {0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
     // orange to white: {102, 51, 0}, {204, 122, 0}, {255, 153, 51}, {255, 255, 255}
     // ice: {0, 102, 204}, {173, 216, 230}, {224, 255, 255}, {255, 250, 250}
     // lava: {128, 0, 0}, {255, 69, 0}, {255, 140, 0}, {255, 215, 0}
@@ -131,6 +132,11 @@ class Fluid {
 
     float vorticityStrength;
 
+    std::vector<float> confinementForce;
+
+    std::vector<float> vorticity;
+    std::vector<float> vorticityMag;
+
     // any variables or methods commented out are for constant memory spatial hasing 
     /*int tableSize;
     int numObjects;
@@ -155,6 +161,8 @@ public:
             this->positions.resize(2 * numParticles);
             this->velocities.resize(2 * numParticles);
             this->particleDensity.resize(numCells);
+            this->vorticity.resize(2 * ((numX - 2) * (numY - 2)));
+            this->vorticityMag.resize((numX - 2) * (numY - 2));
             this->particleColors.resize(3 * numParticles);
             std::fill(begin(particleColors), end(particleColors), 0);
             this->va.resize(numParticles * 4);
@@ -760,7 +768,7 @@ public:
         return (this->v[i * n + j + 1] * bottomType - this->v[i * n + j - 1] * topType) * 0.5f - (this->u[(i + 1) * n + j] * rightType - this->u[(i - 1) * n + j] * leftType) * 0.5f;
     }
 
-    void applyVorticityConfinementPass(bool red, int32_t startColumn, int32_t endColumn) {
+    void calcVorticityConfinement(bool red, int32_t startColumn, int32_t endColumn) {
         const int32_t n = this->numY;
         for (int32_t i = startColumn; i < endColumn; ++i) {
             for (int32_t j = 1; j < numY - 1; ++j) {
@@ -773,10 +781,16 @@ public:
                 float dx = abs(curl(i, j - 1)) - abs(curl(i, j + 1));
                 float dy = abs(curl(i + 1, j)) - abs(curl(i - 1, j));
 
-                const float len = std::sqrt(dx * dx + dy * dy) + 0.000001f; 
+                const float len = std::sqrt(dx * dx + dy * dy);
 
-                dx /= len;
-                dy /= len; 
+                if (len > 0.f) {
+                    dx /= len;
+                    dy /= len; 
+                }
+                else {
+                    dx = 0.f;
+                    dy = 0.f;
+                }
 
                 const float c = curl(i, j);
 
@@ -793,21 +807,101 @@ public:
 
         for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
-                this->applyVorticityConfinementPass(true, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+                this->calcVorticityConfinement(true, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
             });
         }
 
-        this->applyVorticityConfinementPass(true, numX - 1 - numMissedColumns, numX - 1);
+        this->calcVorticityConfinement(true, numX - 1 - numMissedColumns, numX - 1);
 
         thread_pool.waitForCompletion();
 
         for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
-                this->applyVorticityConfinementPass(false, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+                this->calcVorticityConfinement(false, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
             });
         }
 
-        this->applyVorticityConfinementPass(false, numX - 1 - numMissedColumns, numX - 1);
+        this->calcVorticityConfinement(false, numX - 1 - numMissedColumns, numX - 1);
+
+        thread_pool.waitForCompletion();
+    }
+
+    void calcVorticityConfinement2(int32_t startColumn, int32_t endColumn) {
+        // u is x, v is y
+        const int32_t n = this->numY;
+        for (int32_t i = startColumn; i < endColumn; ++i) {
+            for (int32_t j = 1; j < numY - 1; ++j) {
+                float dv_dy = (this->u[i * n + j + 1] - this->u[i * n + j - 1]) / (2.f * cellSpacing);
+                float du_dx = (this->v[(i + 1) * n + j] - this->v[(i - 1) * n + j]) / (2.f * cellSpacing);
+
+                // use i - 1 and j - 1 to index into vorticity and vorticityMag because these vectors arent storing memory for all cells, only the inside ones
+                int32_t index = 2 * ((i - 1) * n + j - 1);
+                vorticity[index] = du_dx;
+                vorticity[index + 1] = -dv_dy;
+
+                vorticityMag[(i - 1) * n + j - 1] = std::sqrt(vorticity[index] * vorticity[index] + vorticity[index + 1] * vorticity[index + 1]);
+            }
+        }
+    }
+
+    void applyVorticityConfinement(int32_t startColumn, int32_t endColumn) {
+        const int32_t n = this->numY;
+        for (int32_t i = startColumn; i < endColumn; ++i) {
+            for (int32_t j = 1; j < numY - 1; ++j) {
+                int32_t right = i * n + j - 1;
+                int32_t left = (i - 2) * n + j - 1;
+                float vorticityGradX = (vorticityMag[right] - vorticityMag[left]) / (2.f * cellSpacing);
+
+                int32_t bottom = (i - 1) * n + j;
+                int32_t top = (i - 1) * n + j - 2;
+                float vorticityGradY = (vorticityMag[bottom] - vorticityMag[top]) / (2.f * cellSpacing);
+
+                float vorticityGradMag = std::sqrt(vorticityGradX * vorticityGradX + vorticityGradY * vorticityGradY);
+
+                float normGradX;
+                float normGradY;
+
+                if (vorticityGradMag > 0.f) {
+                    normGradX = vorticityGradX / vorticityGradMag;
+                    normGradY = vorticityGradY / vorticityGradMag;
+                }
+                else {
+                    normGradX = 0;
+                    normGradY = 0;
+                }
+
+                int32_t index = (i - 1) * n + j - 1;
+                float vortForceX = vorticityStrength * (-normGradY * vorticity[2 * index]);
+                float vortForceY = vorticityStrength * (normGradX * vorticity[2 * index + 1]);
+
+                u[i * n + j] += vortForceX * dt;
+                v[i * n + j] += vortForceY * dt;
+            }
+        }
+    }
+
+    void VorticityConfinement() {
+        const int32_t numThreads = thread_pool.m_thread_count;
+        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
+        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->calcVorticityConfinement2(1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+            });
+        }
+
+        this->calcVorticityConfinement2(numX - 1 - numMissedColumns, numX - 1);
+
+        thread_pool.waitForCompletion();
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->applyVorticityConfinement(1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+            });
+        }
+
+        this->applyVorticityConfinement(numX - 1 - numMissedColumns, numX - 1);
 
         thread_pool.waitForCompletion();
     }
@@ -931,7 +1025,7 @@ public:
 
             sf::Color color;
 
-            int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 7000; 
+            int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 15000; 
             if (vel > gradient.size()) {
                 color = sf::Color(gradient[gradient.size() - 1][0],     gradient[gradient.size() - 1][1], gradient[gradient.    size() - 1][2], 255);
             }
@@ -1065,8 +1159,11 @@ public:
         }
         
         //this->solveIncompressibilityRedBlack(numPressureIters, overRelaxation);
+        //this->calcVorticityConfinementRedBlack();
+        //this->VorticityConfinement(); // work in progress
         this->solveIncompressibility(numPressureIters, overRelaxation);
 
+        // should be calculating vorticity confinement before the grid is solved, but calculating it after gives an artistic effect that I like, even if it's less physically accurate (vortex confinement isn't physically accurate anyways)
         this->calcVorticityConfinementRedBlack();
 
         this->transferVelocities(false, flipRatio);
