@@ -27,7 +27,20 @@ int main()
     float gridSize = 90.f; 
     int numPressureIters = 30; 
     float diffusionRatio = 0.8f;
-    float flipRatio = 0.8f;*/
+    float flipRatio = 0.8f;
+    float seperationInit = 2.7f;
+    float vorticityStrength = 4.f;*/
+
+    // 1) lots
+    /*int numParticles = 25000; 
+    float gravity = 5500.f; 
+    float divergenceModifier = 8.5f; 
+    float gridSize = 80.f; 
+    int numPressureIters = 25; 
+    float diffusionRatio = 0.95f; 
+    float flipRatio = 0.97f;
+    float seperationInit = 2.4f;
+    float vorticityStrength = 60.f; */
 
     // 2) casual
     int numParticles = 15000; 
@@ -36,18 +49,9 @@ int main()
     float gridSize = 70.f; 
     int numPressureIters = 25; 
     float diffusionRatio = 0.95f; 
-    float flipRatio = 0.9f;
+    float flipRatio = 0.99f;
     float seperationInit = 2.7f;
-    float vorticityStrength = 2.f; // messes with the grid in some irreversible way at the start of the sim if set to anything > 0
-
-    // 3) lots
-    /*int numParticles = 25000; 
-    float gravity = 4700.f; 
-    float divergenceModifier = 15.5f; 
-    float gridSize = 75.f; 
-    int numPressureIters = 25; 
-    float diffusionRatio = 0.95f; 
-    float flipRatio = 0.9f;*/
+    float vorticityStrength = 2.f; 
 
     // 4) a lot
     /*int numParticles = 30000; 
@@ -133,7 +137,8 @@ int main()
     while (window.isOpen())
     {
         sf::Time deltaTime = deltaClock.restart();
-        float dt = deltaTime.asSeconds();
+        float dt = 1.f / 120.f;
+        float trueDT = deltaTime.asSeconds();
 
         //totalDT += dt;
         numDT++;
@@ -146,7 +151,7 @@ int main()
             }
             else if (event.type == sf::Event::KeyPressed) {
                 if (event.key.code == sf::Keyboard::B) {
-                    if (flipRatio < 0.99) {
+                    if (flipRatio < 1.f) {
                         flipRatio += 0.01;
                         oss.str("");  
                         oss.clear();
@@ -189,6 +194,11 @@ int main()
                     fluid.setRigidObjectActive(false);
                     fluid.setForceObjectActive(false);
                     fluid.setGeneratorActive(true);
+                }
+                else if (event.key.code == sf::Keyboard::Num4) {
+                    fluid.setRigidObjectActive(false);
+                    fluid.setForceObjectActive(false);
+                    fluid.setGeneratorActive(false);
                 }
                 else if (event.key.code == sf::Keyboard::T) {
                     fluid.addToForceObjectRadius(10);
@@ -251,11 +261,11 @@ int main()
 
         window.clear();
 
-        fluid.simulate(dt, window, leftMouseDown, justPressed, numPressureIters, overRelaxation, flipRatio, rightMouseDown);
+        fluid.simulate(trueDT, window, leftMouseDown, justPressed, numPressureIters, overRelaxation, flipRatio, rightMouseDown);
 
         frame++;
         if (frame == 30) {
-            fps = (int)(1.f / dt);
+            fps = (int)(1.f / trueDT);
             frame = 0;
         }
 
