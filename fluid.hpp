@@ -613,8 +613,11 @@ public:
         if (toGrid) {
             this->cacheTransferNodes();
             this->setUpTransferGrids();
+            this->transferToGrid();
         }
-        this->transferStep(toGrid);
+        else {
+            this->transferToParticles();
+        }
     }
 
     void setUpTransferGrids() {
@@ -671,115 +674,171 @@ public:
         }
     }
 
-    void transferStep(const bool& toGrid) {
-        const float n = this->numY;
-        const float h2 = 0.5 * cellSpacing;
+    void transferToParticle(int32_t startIndex, int32_t endIndex) {
+        const int32_t n = this->numY;
+        for (int32_t i = startIndex; i < endIndex; ++i) {
+            const int32_t nr0_u = nr0[2 * i];
+            const int32_t nr1_u = nr1[2 * i];
+            const int32_t nr2_u = nr2[2 * i];
+            const int32_t nr3_u = nr3[2 * i];
 
-        const int32_t numRemainingThreads = thread_pool.m_thread_count - 2;
-        const int32_t numParticlesPerThread = numParticles / numRemainingThreads;
-        const int32_t numMissedParticles = numParticles - numParticlesPerThread * numRemainingThreads;
+            const float d0_u = d0[2 * i];
+            const float d1_u = d1[2 * i];
+            const float d2_u = d2[2 * i];
+            const float d3_u = d3[2 * i];
 
-        // u and v grids are staggered, so make sure that you subtract half cell spacing from particle y positions when transferring this->u to particles and vice versa for this->v
+            const int32_t nr0_v = nr0[2 * i + 1];
+            const int32_t nr1_v = nr1[2 * i + 1];
+            const int32_t nr2_v = nr2[2 * i + 1];
+            const int32_t nr3_v = nr3[2 * i + 1];
 
-        for (int i = 0; i < this->numParticles; ++i) {
-            
-            int32_t nr0_u = nr0[2 * i];
-            int32_t nr1_u = nr1[2 * i];
-            int32_t nr2_u = nr2[2 * i];
-            int32_t nr3_u = nr3[2 * i];
+            const float d0_v = d0[2 * i + 1];
+            const float d1_v = d1[2 * i + 1];
+            const float d2_v = d2[2 * i + 1];
+            const float d3_v = d3[2 * i + 1];
 
-            float d0_u = d0[2 * i];
-            float d1_u = d1[2 * i];
-            float d2_u = d2[2 * i];
-            float d3_u = d3[2 * i];
-
-            int32_t nr0_v = nr0[2 * i + 1];
-            int32_t nr1_v = nr1[2 * i + 1];
-            int32_t nr2_v = nr2[2 * i + 1];
-            int32_t nr3_v = nr3[2 * i + 1];
-
-            float d0_v = d0[2 * i + 1];
-            float d1_v = d1[2 * i + 1];
-            float d2_v = d2[2 * i + 1];
-            float d3_v = d3[2 * i + 1];
-
-            float pvx = this->velocities[2 * i];
-            float pvy = this->velocities[2 * i + 1];
+            const float pvx = this->velocities[2 * i];
+            const float pvy = this->velocities[2 * i + 1];
            
-            if (toGrid) {
-
-                this->u[nr0_u] += pvx * d0_u;  
-                this->u[nr1_u] += pvx * d1_u;
-                this->u[nr2_u] += pvx * d2_u;
-                this->u[nr3_u] += pvx * d3_u;
-
-                this->du[nr0_u] += d0_u;
-                this->du[nr1_u] += d1_u;
-                this->du[nr2_u] += d2_u;
-                this->du[nr3_u] += d3_u;
-
-                this->v[nr0_v] += pvy * d0_v;  
-                this->v[nr1_v] += pvy * d1_v;
-                this->v[nr2_v] += pvy * d2_v;
-                this->v[nr3_v] += pvy * d3_v;
-
-                this->dv[nr0_v] += d0_v;
-                this->dv[nr1_v] += d1_v;
-                this->dv[nr2_v] += d2_v;
-                this->dv[nr3_v] += d3_v;
-            }
-            else {
                 // these will be used to make sure that air cells are not considered when transferring velocities back to particles
                 // nr0 - offset is the same thing as [(i-1) * n]
                 // if u is being considered, then we only have to check left and right cells ([nr0] and [nr0 - n])
                 // if v is being considered, then we only have to check above and below cells ([nr0] and [nr0 - 1])
-                float valid0u = this->cellType[nr0_u] != AIR_CELL || this->cellType[nr0_u - n] != AIR_CELL;
-                float valid1u = this->cellType[nr1_u] != AIR_CELL || this->cellType[nr1_u - n] != AIR_CELL;
-                float valid2u = this->cellType[nr2_u] != AIR_CELL || this->cellType[nr2_u - n] != AIR_CELL;
-                float valid3u = this->cellType[nr3_u] != AIR_CELL || this->cellType[nr3_u - n] != AIR_CELL;
+            const float valid0u = this->cellType[nr0_u] != AIR_CELL || this->cellType[nr0_u - n] != AIR_CELL;
+            const float valid1u = this->cellType[nr1_u] != AIR_CELL || this->cellType[nr1_u - n] != AIR_CELL;
+            const float valid2u = this->cellType[nr2_u] != AIR_CELL || this->cellType[nr2_u - n] != AIR_CELL;
+            const float valid3u = this->cellType[nr3_u] != AIR_CELL || this->cellType[nr3_u - n] != AIR_CELL;
 
-                float valid0v = this->cellType[nr0_v] != AIR_CELL || this->cellType[nr0_v - 1] != AIR_CELL;
-                float valid1v = this->cellType[nr1_v] != AIR_CELL || this->cellType[nr1_v - 1] != AIR_CELL;
-                float valid2v = this->cellType[nr2_v] != AIR_CELL || this->cellType[nr2_v - 1] != AIR_CELL;
-                float valid3v = this->cellType[nr3_v] != AIR_CELL || this->cellType[nr3_v - 1] != AIR_CELL;
+            const float valid0v = this->cellType[nr0_v] != AIR_CELL || this->cellType[nr0_v - 1] != AIR_CELL;
+            const float valid1v = this->cellType[nr1_v] != AIR_CELL || this->cellType[nr1_v - 1] != AIR_CELL;
+            const float valid2v = this->cellType[nr2_v] != AIR_CELL || this->cellType[nr2_v - 1] != AIR_CELL;
+            const float valid3v = this->cellType[nr3_v] != AIR_CELL || this->cellType[nr3_v - 1] != AIR_CELL;
 
-                float divX = valid0u * d0_u + valid1u * d1_u + valid2u * d2_u + valid3u * d3_u;
-                float divY = valid0v * d0_v + valid1v * d1_v + valid2v * d2_v + valid3v * d3_v;
+            const float divX = valid0u * d0_u + valid1u * d1_u + valid2u * d2_u + valid3u * d3_u;
+            const float divY = valid0v * d0_v + valid1v * d1_v + valid2v * d2_v + valid3v * d3_v;
 
-                float picV;
-                float corr;
-                float flipV;
+            float picV;
+            float corr;
+            float flipV;
 
-                if (divX > 0.f) {
-                    picV = (valid0u * d0_u * this->u[nr0_u] + valid1u * d1_u * this->u[nr1_u] + valid2u * d2_u * this->u[nr2_u] + valid3u * d3_u * this->u[nr3_u]) / divX;
+            if (divX > 0.f) {
+                picV = (valid0u * d0_u * this->u[nr0_u] + valid1u * d1_u * this->u[nr1_u] + valid2u * d2_u * this->u[nr2_u] + valid3u * d3_u * this->u[nr3_u]) / divX;
 
-                    corr = (valid0u * d0_u * (this->u[nr0_u] - this->prevU[nr0_u]) + valid1u * d1_u * (this->u[nr1_u] - this->prevU[nr1_u]) + valid2u * d2_u * (this->u[nr2_u] - this->prevU[nr2_u]) + valid3u * d3_u * (this->u[nr3_u] - this->prevU[nr3_u])) / divX;
-                    flipV = pvx + corr;
-                    this->velocities[2 * i] = (1.f - flipRatio) * picV + flipRatio * flipV;
-                }
+                corr = (valid0u * d0_u * (this->u[nr0_u] - this->prevU[nr0_u]) + valid1u * d1_u * (this->u[nr1_u] - this->prevU[nr1_u]) + valid2u * d2_u * (this->u[nr2_u] - this->prevU[nr2_u]) + valid3u * d3_u * (this->u[nr3_u] - this->prevU[nr3_u])) / divX;
+                flipV = pvx + corr;
+                this->velocities[2 * i] = (1.f - flipRatio) * picV + flipRatio * flipV;
+            }
 
-                if (divY > 0.f) {
-                    picV = (valid0v * d0_v * this->v[nr0_v] + valid1v * d1_v * this->v[nr1_v] + valid2v * d2_v * this->v[nr2_v] + valid3v * d3_v * this->v[nr3_v]) / divY;
+            if (divY > 0.f) {
+                picV = (valid0v * d0_v * this->v[nr0_v] + valid1v * d1_v * this->v[nr1_v] + valid2v * d2_v * this->v[nr2_v] + valid3v * d3_v * this->v[nr3_v]) / divY;
 
-                    corr = (valid0v * d0_v * (this->v[nr0_v] - this->prevV[nr0_v]) + valid1v * d1_v * (this->v[nr1_v] - this->prevV[nr1_v]) + valid2v * d2_v * (this->v[nr2_v] - this->prevV[nr2_v]) + valid3v * d3_v * (this->v[nr3_v] - this->prevV[nr3_v])) / divY;
-                    flipV = pvy + corr;
-                    this->velocities[2 * i + 1] = (1.f - flipRatio) * picV + flipRatio * flipV;
-                }
+                corr = (valid0v * d0_v * (this->v[nr0_v] - this->prevV[nr0_v]) + valid1v * d1_v * (this->v[nr1_v] - this->prevV[nr1_v]) + valid2v * d2_v * (this->v[nr2_v] - this->prevV[nr2_v]) + valid3v * d3_v * (this->v[nr3_v] - this->prevV[nr3_v])) / divY;
+                flipV = pvy + corr;
+                this->velocities[2 * i + 1] = (1.f - flipRatio) * picV + flipRatio * flipV;
             }
         }
+    }
 
-        if (toGrid) {
-            for (int i = 0; i < this->u.size(); ++i) {
-                float prevNode = this->du[i];
-                if (prevNode > 0.f) {
-                    this->u[i] /= prevNode;
-                }
+    void transferToParticles() {
+
+        const int32_t numThreads = thread_pool.m_thread_count;
+        const int32_t numParticlesPerThread = numParticles / numThreads;
+        const int32_t numMissedParticles = numParticles - numParticlesPerThread * numThreads;
+
+        // u and v grids are staggered, so make sure that you subtract half cell spacing from particle y positions when transferring this->u to particles and vice versa for this->v
+
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->transferToParticle(i * numParticlesPerThread, i * numParticlesPerThread + numParticlesPerThread);
+            });
+        }
+
+        this->transferToParticle(numParticles - numMissedParticles, numParticles);
+
+        thread_pool.waitForCompletion();
+
+        //this->transferToParticle(0, numParticles);
+    }
+
+    void transferToUGrid() {
+        for (int32_t i = 0; i < this->numParticles; ++i) {
+            const int32_t nr0_u = nr0[2 * i];
+            const int32_t nr1_u = nr1[2 * i];
+            const int32_t nr2_u = nr2[2 * i];
+            const int32_t nr3_u = nr3[2 * i];
+
+            const float d0_u = d0[2 * i];
+            const float d1_u = d1[2 * i];
+            const float d2_u = d2[2 * i];
+            const float d3_u = d3[2 * i];
+
+            const float pvx = this->velocities[2 * i];
+            const float pvy = this->velocities[2 * i + 1];
+           
+            this->u[nr0_u] += pvx * d0_u;  
+            this->u[nr1_u] += pvx * d1_u;
+            this->u[nr2_u] += pvx * d2_u;
+            this->u[nr3_u] += pvx * d3_u;
+
+            this->du[nr0_u] += d0_u;
+            this->du[nr1_u] += d1_u;
+            this->du[nr2_u] += d2_u;
+            this->du[nr3_u] += d3_u;
+        }
+    }
+
+    void transferToVGrid() {
+        for (int32_t i = 0; i < numParticles; ++i) {
+            const int32_t nr0_v = nr0[2 * i + 1];
+            const int32_t nr1_v = nr1[2 * i + 1];
+            const int32_t nr2_v = nr2[2 * i + 1];
+            const int32_t nr3_v = nr3[2 * i + 1];
+
+            const float d0_v = d0[2 * i + 1];
+            const float d1_v = d1[2 * i + 1];
+            const float d2_v = d2[2 * i + 1];
+            const float d3_v = d3[2 * i + 1];
+
+            const float pvx = this->velocities[2 * i];
+            const float pvy = this->velocities[2 * i + 1];
+    
+            this->v[nr0_v] += pvy * d0_v;  
+            this->v[nr1_v] += pvy * d1_v;
+            this->v[nr2_v] += pvy * d2_v;
+            this->v[nr3_v] += pvy * d3_v;
+
+            this->dv[nr0_v] += d0_v;
+            this->dv[nr1_v] += d1_v;
+            this->dv[nr2_v] += d2_v;
+            this->dv[nr3_v] += d3_v;
+        }
+    }
+
+    void transferToGrid() {
+        const float n = this->numY;
+        const float h2 = 0.5 * cellSpacing;
+
+        // u and v grids are staggered, so make sure that you subtract half cell spacing from particle y positions when transferring this->u to particles and vice versa for this->v
+
+        thread_pool.addTask([&]() {
+            this->transferToUGrid();
+        });
+        thread_pool.addTask([&]() {
+            this->transferToVGrid();
+        });
+        thread_pool.waitForCompletion();
+
+
+        for (int i = 0; i < this->u.size(); ++i) {
+            float prevNode = this->du[i];
+            if (prevNode > 0.f) {
+                this->u[i] /= prevNode;
             }
-            for (int i = 0; i < this->v.size(); ++i) {
-                float prevNode = this->dv[i];
-                if (prevNode > 0.f) {
-                    this->v[i] /= prevNode;
-                }
+        }
+        for (int i = 0; i < this->v.size(); ++i) {
+            float prevNode = this->dv[i];
+            if (prevNode > 0.f) {
+                this->v[i] /= prevNode;
             }
         }
     }
