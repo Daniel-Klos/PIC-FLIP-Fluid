@@ -6,10 +6,25 @@
 #include <algorithm>
 #include <random>
 #include <array>
-#include <chrono>
 
 #include "thread_pool.hpp"
 #include "collision_grid.hpp"
+
+float dot(const std::vector<float>& a, const std::vector<float>& b) {
+    return std::inner_product(a.begin(), a.end(), b.begin(), 0.f);
+}
+
+void axpy(float alpha, const std::vector<float>& x, std::vector<float>& y) {
+    for (size_t i = 0; i < x.size(); ++i) {
+        y[i] += alpha * x[i];
+    }
+}
+
+void scal(float alpha, std::vector<float>& x) {
+    for (float& val : x) {
+        val *= alpha;
+    }
+}
 
 class Fluid {
     int numX;
@@ -77,7 +92,10 @@ class Fluid {
 
     std::array<std::array<int, 3>, 100> gradient;
     std::array<std::array<int, 3>, 4> colorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
-    // some nice gradients to put into colorMap:
+
+    std::array<std::array<int, 3>, 100> tempgradient;
+    std::array<std::array<int, 3>, 4> tempMap{{{0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}}};
+    // some nice gradients to put into these colorMaps:
     // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
     // night ocean: {0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
     // sunset: {0, 0, 64}, {128, 0, 128}, {255, 128, 0}, {255, 255, 0}
@@ -108,8 +126,6 @@ class Fluid {
     tp::ThreadPool& thread_pool;
 
     const float colorDiffusionCoeff = 0.001f;
-
-    bool diffuseColors = true;
 
     float diffusionRatio;
 
@@ -159,9 +175,21 @@ class Fluid {
     std::vector<float> d2;
     std::vector<float> d3;
 
+    std::vector<float> temperatures;
+    float groundConductivity = 30.f; // 20
+    float interConductivity = 15.f;  // 15
+    float fireStrength = 100.f;      // 75
+    float tempDiffusion = 0.1f;      // 0.1
+
+    int32_t renderPattern = 0;
+
+    bool fireActive = false;
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
+
+            this->temperatures.resize(numParticles);
 
             this->nr0.resize(2 * numParticles);
             this->nr1.resize(2 * numParticles);
@@ -189,6 +217,7 @@ public:
             std::fill(begin(particleColors), end(particleColors), 0);
             this->va.resize(numParticles * 4);
             texture.loadFromFile("white_circle.png");
+            texture.generateMipmap();
             auto const texture_size = static_cast<sf::Vector2f>(texture.getSize());
             for (int index = 0; index < numParticles; ++index) {
                 int i = 4 * index;
@@ -303,6 +332,21 @@ public:
                 }
             }
 
+            num_colors = tempMap.size() - 1; // number of colors - 1
+            num_steps = 1.f * tempgradient.size() / num_colors; //num_steps = 50 * key_range
+            index = 0;
+            for (int i = 0; i < num_colors; ++i) {  
+                for (int x = 0; x < num_steps; ++x) {
+                    float t = 1.f * x / num_steps;  // Interpolation factor
+                    // Linear interpolation for r, g, b values between colorMap[i] andcolorMap [i+1]
+                    int r = (int)(tempMap[i][0] * (1 - t) + tempMap[i + 1][0] * t);
+                    int g = (int)(tempMap[i][1] * (1 - t) + tempMap[i + 1][1] * t);
+                    int b = (int)(tempMap[i][2] * (1 - t) + tempMap[i + 1][2] * t);
+                    tempgradient[index] = std::array<int, 3>{r, g, b};
+                    index++;
+                }
+            }
+
             /*this->spacing = 2 * this->radius;
             this->tableSize = 2 * numParticles;
             this->cellCount.resize(this->tableSize + 1);
@@ -389,6 +433,13 @@ public:
             this->positions[2 * i] += this->velocities[2 * i] * dt;
             this->positions[2 * i + 1] += this->velocities[2 * i + 1] * dt;
             this->velocities[2 * i + 1] += gravity * dt;
+
+            if (this->fireActive && this->renderPattern == 2 && positions[2 * i + 1] < HEIGHT - cellSpacing - 10) {
+                this->velocities[2 * i + 1] -= fireStrength * temperatures[i] * dt;
+            }
+            if (this->temperatures[i] > 0) {
+                this->temperatures[i] -= tempDiffusion;
+            }
         }
     }
 
@@ -425,6 +476,10 @@ public:
 
             positions[2 * otherIndex] -= col_vecX;
             positions[2 * otherIndex + 1] -= col_vecY;
+
+            const float transfer = (temperatures[index] - temperatures[otherIndex]) * interConductivity * dt;
+            temperatures[index] -= transfer;
+            temperatures[otherIndex] += transfer;
         }
     }
 
@@ -439,15 +494,14 @@ public:
     {
         for (uint32_t i{0}; i < c.objects_count; ++i) {
             const uint32_t atom_idx = c.objects[i];
-            for (int32_t i = -1; i < 2; ++i) {
-                checkAtomCellCollisions(atom_idx, grid.data[index + i]);
+            for (int32_t side = 0; side < 2; ++side) {
+                checkAtomCellCollisions(atom_idx, grid.data[index + grid.height + side]);
             }
-            for (int32_t i = -1; i < 2; ++i) {
-                checkAtomCellCollisions(atom_idx, grid.data[index + (grid.height + i)]);
+            for (int32_t side = 0; side < 2; ++side) {
+                checkAtomCellCollisions(atom_idx, grid.data[index + side]);   
             }
-            for (int32_t i = -1; i < 2; ++i) {
-                checkAtomCellCollisions(atom_idx, grid.data[index - (grid.height + i)]);
-            }
+            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height]);
+            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height + 1]);
         }
     }
 
@@ -553,6 +607,10 @@ public:
                 this->positions[2 * i + 1] = HEIGHT - radius - this->cellSpacing;
                 if (this->velocities[2 * i + 1] > 0) {
                     this->velocities[2 * i + 1] *= -restitution;
+                }
+                const float remove = 5;
+                if (this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
+                    this->temperatures[i] += groundConductivity;
                 }
             }
         }
@@ -900,7 +958,6 @@ public:
         }
     }
 
-
     void solveIncompressibility() {
         std::fill(begin(this->p), end(this->p), 0);
 
@@ -1182,6 +1239,38 @@ public:
         }
     }
 
+    void updateVertexArrayTemperature(const uint32_t startIndex, const uint32_t endIndex) {
+        for (uint32_t index = startIndex; index < endIndex; ++index) {
+            const float s = 0.01f;
+
+            int i = 4 * index;
+            const float px = positions[2 * index];
+            const float py = positions[2 * index + 1];
+
+            float temp = temperatures[index];
+
+            if (temp < 30 and fireActive) {
+                temp = 0.f;
+            }
+
+            const int tempRadius = std::min(temp, radius);
+
+            va[i].position = {px - tempRadius, py - tempRadius};
+            va[i + 1].position = {px + tempRadius, py - tempRadius};
+            va[i + 2].position = {px + tempRadius, py + tempRadius};
+            va[i + 3].position = {px - tempRadius, py + tempRadius};
+
+            sf::Color color;
+
+            color = sf::Color(tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][0], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][1], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][2], 255);
+
+            va[i].color = color;
+            va[i + 1].color = color;
+            va[i + 2].color = color;
+            va[i + 3].color = color;
+        }
+    }
+
     void drawParticlesVertex(sf::RenderWindow& window) {
         window.draw(va, states);
     }
@@ -1270,7 +1359,7 @@ public:
         //this->transferVelocities(false);
         this->transferMulti(false);
 
-        if (diffuseColors) {
+        if (renderPattern == 0) {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
                     this->updateVertexArrayDiffusion(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
@@ -1282,7 +1371,7 @@ public:
             thread_pool.waitForCompletion();
         }
 
-        else {
+        else if (renderPattern == 1) {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
                     this->updateVertexArrayVelocity(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
@@ -1290,6 +1379,18 @@ public:
             }
 
             this->updateVertexArrayVelocity(numParticles - numMissedParticles, numParticles);
+
+            thread_pool.waitForCompletion();
+        }
+
+        else if (renderPattern == 2) {
+            for (int i = 0; i < numThreads; ++i) {
+                thread_pool.addTask([&, i]() {
+                    this->updateVertexArrayTemperature(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+                });
+            }
+
+            this->updateVertexArrayTemperature(numParticles - numMissedParticles, numParticles);
 
             thread_pool.waitForCompletion();
         }
@@ -1360,12 +1461,11 @@ public:
         return this->timeForTransfer;
     }
 
-    void setDiffuseColors(bool newBool) {
-        this->diffuseColors = newBool;
-    }
-
-    float getDiffuseColors() {
-        return this->diffuseColors;
+    void setNextRenderPattern() {
+        this->renderPattern++;
+        if (this->renderPattern > 2) {
+            this->renderPattern = 0;
+        }
     }
 
     float getFlipRatio() {
@@ -1386,6 +1486,14 @@ public:
 
     void setRigidObjectActive(bool active) {
         this->rigidObjectActive = active;
+    }
+
+    void setFireActive(bool active) {
+        this->fireActive = active;
+    }
+
+    float getFireActive() {
+        return this->fireActive;
     }
 
     /*void initializeSHConstantMem() {
