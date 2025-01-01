@@ -213,8 +213,8 @@ public:
 
             this->scalingFactor = 2 * radius;
 
-            this->scaledWIDTH = static_cast<float>(WIDTH) / scalingFactor;
-            this->scaledHEIGHT = static_cast<float>(HEIGHT) / scalingFactor;
+            this->scaledWIDTH = std::ceil(static_cast<float>(WIDTH) / scalingFactor);
+            this->scaledHEIGHT = std::ceil(static_cast<float>(HEIGHT) / scalingFactor);
 
             grid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
 
@@ -399,8 +399,8 @@ public:
         uint32_t i{0};
         for (int32_t index = 0; index < numParticles; ++index) {
             if (positions[2 * index] > cellSpacing && positions[2 * index] < WIDTH - cellSpacing &&
-                positions[2 * index + 1] > cellSpacing && positions[2 * index + 1] < HEIGHT - cellSpacing) {
-                grid.addAtom(static_cast<int32_t>(positions[2 * index] / scalingFactor), static_cast<int32_t>(positions[2 * index + 1] / scalingFactor), i);
+                positions[2 * index + 1] > cellSpacing && positions[2 * index + 1] < HEIGHT - cellSpacing) {  
+                    grid.addAtom(static_cast<int32_t>(positions[2 * index] / scalingFactor), static_cast<int32_t>(positions[2 * index + 1] / scalingFactor), i);
             }
             ++i;
         }
@@ -408,17 +408,15 @@ public:
 
     void solveContact(uint32_t index, uint32_t otherIndex)
     {
-        constexpr float response_coef = 1.0f;
         constexpr float eps           = 0.0001f;
-        const float o2_o1X  = positions[2 * index] - positions[2 * otherIndex];
-        const float o2_o1Y  = positions[2 * index + 1] - positions[2 * otherIndex + 1];
+        const float o2_o1X = positions[2 * index] - positions[2 * otherIndex];
+        const float o2_o1Y = positions[2 * index + 1] - positions[2 * otherIndex + 1];
 
         const float dist2 = o2_o1X * o2_o1X + o2_o1Y * o2_o1Y;
 
         if (dist2 < checkSeperationDist && dist2 > eps) {
             const float dist          = sqrt(dist2);
-            // Radius are all equal to 1.0f
-            const float delta = response_coef * 0.5f * (moveDist - dist) / dist;
+            const float delta = 0.5f * (moveDist - dist) / dist;
             const float col_vecX = o2_o1X * delta;
             const float col_vecY = o2_o1Y * delta;
 
@@ -1133,12 +1131,8 @@ public:
             sf::Color color;
 
             int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 15000; 
-            if (vel > gradient.size()) {
-                color = sf::Color(gradient[gradient.size() - 1][0],     gradient[gradient.size() - 1][1], gradient[gradient.    size() - 1][2], 255);
-            }
-            else {
-                color = sf::Color(gradient[vel][0], gradient[vel][1],   gradient[vel][2], 255);
-            }
+            
+            color = sf::Color(gradient[std::min(gradient.size() - 1, static_cast<unsigned long long>(vel))][0], gradient[std::min(gradient.size() - 1, static_cast<unsigned long long>(vel))][1], gradient[std::min(gradient.size() - 1, static_cast<unsigned long long>(vel))][2], 255);
 
             va[i].color = color;
             va[i + 1].color = color;
