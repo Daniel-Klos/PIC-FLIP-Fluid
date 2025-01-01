@@ -10,22 +10,6 @@
 #include "thread_pool.hpp"
 #include "collision_grid.hpp"
 
-float dot(const std::vector<float>& a, const std::vector<float>& b) {
-    return std::inner_product(a.begin(), a.end(), b.begin(), 0.f);
-}
-
-void axpy(float alpha, const std::vector<float>& x, std::vector<float>& y) {
-    for (size_t i = 0; i < x.size(); ++i) {
-        y[i] += alpha * x[i];
-    }
-}
-
-void scal(float alpha, std::vector<float>& x) {
-    for (float& val : x) {
-        val *= alpha;
-    }
-}
-
 class Fluid {
     int numX;
     int numY;
