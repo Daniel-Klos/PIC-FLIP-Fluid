@@ -81,7 +81,7 @@
         }
     }
 
-    // would need a gigantic grid for incompressibility multithreading to be viable 
+    // Gauss seidel multithreading just isnt viable
     void solveIncompressibilityRedBlack(const int numIters, const float overRelaxation) {
         std::fill(begin(this->p), end(this->p), 0);
 
