@@ -1305,7 +1305,7 @@ public:
         const uint32_t particlesPerThread = numParticles / numThreads;
         const uint32_t numMissedParticles = numParticles - numThreads * particlesPerThread;
 
-        /*for (int i = 0; i < numThreads; ++i) {
+        for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
                 this->integrate(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
             });
@@ -1313,9 +1313,14 @@ public:
 
         this->integrate(numParticles - numMissedParticles, numParticles);
 
-        thread_pool.waitForCompletion();*/
+        thread_pool.waitForCompletion();
 
+        /*auto start = std::chrono::high_resolution_clock::now();
         this->integrate(0, numParticles);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+        std::cout << "walls: " << duration.count() << " microseconds" << "\n";*/
 
         //this->initializeSHConstantMem();
         addObjectsToGrid();
@@ -1337,9 +1342,8 @@ public:
 
         std::cout << "collision: " << duration.count() << " milliseconds" << "\n";*/
 
-        constrainWalls(0, numParticles);
-
-        /*for (int i = 0; i < numThreads; ++i) {
+        //auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
                 this->constrainWalls(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
             });
@@ -1347,7 +1351,7 @@ public:
 
         this->constrainWalls(numParticles - numMissedParticles, numParticles);
 
-        thread_pool.waitForCompletion();*/
+        thread_pool.waitForCompletion();
 
         //this->makeParticleQueriesConstantMem(0, numParticles);
 
