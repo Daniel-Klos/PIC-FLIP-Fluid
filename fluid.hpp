@@ -10,6 +10,22 @@
 #include "thread_pool.hpp"
 #include "collision_grid.hpp"
 
+float dot(const std::vector<float>& a, const std::vector<float>& b) {
+    return std::inner_product(a.begin(), a.end(), b.begin(), 0.f);
+}
+
+void axpy(float alpha, const std::vector<float>& x, std::vector<float>& y) {
+    for (size_t i = 0; i < x.size(); ++i) {
+        y[i] += alpha * x[i];
+    }
+}
+
+void scal(float alpha, std::vector<float>& x) {
+    for (float& val : x) {
+        val *= alpha;
+    }
+}
+
 class Fluid {
     int numX;
     int numY;
@@ -430,12 +446,18 @@ public:
     void addObjectsToGrid()
     {
         grid.clear();
-        // Safety border to avoid adding object outside the grid
+
+        const float minX = cellSpacing;
+        const float maxX = WIDTH - cellSpacing;
+        const float minY = cellSpacing;
+        const float maxY = HEIGHT - cellSpacing;
+
         uint32_t i{0};
         for (int32_t index = 0; index < numParticles; ++index) {
-            if (positions[2 * index] > cellSpacing && positions[2 * index] < WIDTH - cellSpacing &&
-                positions[2 * index + 1] > cellSpacing && positions[2 * index + 1] < HEIGHT - cellSpacing) {  
-                    grid.addAtom(static_cast<int32_t>(positions[2 * index] / scalingFactor), static_cast<int32_t>(positions[2 * index + 1] / scalingFactor), i);
+            float x = positions[2 * index];
+            float y = positions[2 * index + 1];
+            if (x > minX && x < maxX && y > minY && y < maxY) {
+                grid.addAtom(static_cast<int32_t>(x / scalingFactor), static_cast<int32_t>(y / scalingFactor), i);
             }
             ++i;
         }
@@ -484,7 +506,7 @@ public:
             for (int32_t side = 0; side < 2; ++side) {
                 checkAtomCellCollisions(atom_idx, grid.data[index + side]);   
             }
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height]);
+            //checkAtomCellCollisions(atom_idx, grid.data[index - grid.height]);
             checkAtomCellCollisions(atom_idx, grid.data[index - grid.height + 1]);
         }
     }
@@ -538,7 +560,7 @@ public:
         const uint32_t thread_count = thread_pool.m_thread_count;
         const uint32_t slice_count  = thread_count * 2;
         const uint32_t slice_size   = (grid.width / slice_count) * grid.height;
-        const uint32_t last_cell    = (2 * (thread_count - 1) + 2) * slice_size;
+        const uint32_t last_cell    = 2 * thread_count * slice_size;
         // Find collisions in two passes to avoid data races
 
         // First collision pass
@@ -600,58 +622,74 @@ public:
         }
     }
 
-    void cacheTransferNodes() {
+    void cacheTransferNodes2(int32_t start, int32_t end, float invHeight, int32_t component) {
         const float n = this->numY;
-        const float h2 = 0.5 * cellSpacing;
+        const float h2 = invHeight;
 
-        for (int32_t component = 0; component < 2; ++component) {
-            float dx = (component != 0) * h2;
-            float dy = (component == 0) * h2;
-            for (int32_t i = 0; i < numParticles; ++i) {
-                float x = this->positions[2 * i];
-                float y = this->positions[2 * i + 1];
-                x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
-                y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
-                // x0 is the grid position to the left of the particle, x1 is the position to the right of  the particle. Both can only go up to the second to last cell to the right in the     gridbecause we dont want to be changing wall velocities
-                int x0 = std::max(1, std::min((int)(std::floor((x - dx) * invSpacing)), this->numX - 1));
-                // basically x - xCell to get the weight of that cell in relation to the particle
-                // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied     by grid spacing
-                float tx = ((x - dx) - x0 * cellSpacing) * invSpacing;
-                // add 1 to get the cell to the right
-                int x1 = std::min(x0 + 1, this->numX - 2);
-                // this fixes a bug that makes water touching the left wall and ceiling explode sometimes 
-                if (component == 0 && x0 == 1) {
-                    x0 = x1;
-                }
-                if (component == 1 && x0 == 1) {
-                    x1 = x0;
-                }
-                // same thing with y
-                int y0 = std::max(0, std::min((int)(std::floor((y - dy) * invSpacing)), this->numY - 2));
-                float ty = ((y - dy) - y0 * cellSpacing) * invSpacing;
-                int y1 = std::min(y0 + 1, this->numY - 1);
-                float sx = 1.f - tx;
-                float sy = 1.f - ty;
-                // weights for each corner in u/v field
-                d0[2 * i + component] = sx * sy;
-                d1[2 * i + component] = tx * sy;
-                d2[2 * i + component] = tx * ty;
-                d3[2 * i + component] = sx * ty;
-                // top left
-                nr0[2 * i + component] = x0 * n + y0;
-                // top right
-                nr1[2 * i + component] = x1 * n + y0;
-                // bottom right
-                nr2[2 * i + component] = x1 * n + y1;
-                //bottom left
-                nr3[2 * i + component] = x0 * n + y1;
+        float dx = (component != 0) * h2;
+        float dy = (component == 0) * h2;
+
+        for (int32_t i = start; i < end; ++i) {
+            float x = this->positions[2 * i];
+            float y = this->positions[2 * i + 1];
+            x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
+            y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
+            // x0 is the grid position to the left of the particle, x1 is the position to the right of  the particle. Both can only go up to the second to last cell to the right in the     gridbecause we dont want to be changing wall velocities
+            int x0 = std::max(1, std::min((int)(std::floor((x - dx) * invSpacing)), this->numX - 1));
+            // basically x - xCell to get the weight of that cell in relation to the particle
+            // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied     by grid spacing
+            float tx = ((x - dx) - x0 * cellSpacing) * invSpacing;
+            // add 1 to get the cell to the right
+            int x1 = std::min(x0 + 1, this->numX - 2);
+            // this fixes a bug that makes water touching the left wall and ceiling explode sometimes 
+            if (component == 0 && x0 == 1) {
+                x0 = x1;
             }
+            if (component == 1 && x0 == 1) {
+                x1 = x0;
+            }
+            // same thing with y
+            int y0 = std::max(0, std::min((int)(std::floor((y - dy) * invSpacing)), this->numY - 2));
+            float ty = ((y - dy) - y0 * cellSpacing) * invSpacing;
+            int y1 = std::min(y0 + 1, this->numY - 1);
+            float sx = 1.f - tx;
+            float sy = 1.f - ty;
+            // weights for each corner in u/v field
+            d0[2 * i + component] = sx * sy;
+            d1[2 * i + component] = tx * sy;
+            d2[2 * i + component] = tx * ty;
+            d3[2 * i + component] = sx * ty;
+            // top left
+            nr0[2 * i + component] = x0 * n + y0;
+            // top right
+            nr1[2 * i + component] = x1 * n + y0;
+            // bottom right
+            nr2[2 * i + component] = x1 * n + y1;
+            //bottom left
+            nr3[2 * i + component] = x0 * n + y1;
         }
+    }
+
+    void cacheTransferNodesMulti() {
+        float h2 = 0.5 * cellSpacing;
+
+        const int32_t numThreads = thread_pool.m_thread_count;
+        const int32_t numParticlesPerThread = numParticles / numThreads;
+        const int32_t numMissedParticles = numParticles - numThreads * numParticlesPerThread;
+
+        for (int32_t i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i](){
+                cacheTransferNodes2(numParticlesPerThread * i, numParticlesPerThread * i + numParticlesPerThread, h2, 0);
+                cacheTransferNodes2(numParticlesPerThread * i, numParticlesPerThread * i + numParticlesPerThread, h2, 1);
+            });
+        }
+
+        thread_pool.waitForCompletion();
     }
 
     void transferMulti(const bool& toGrid) {
         if (toGrid) {
-            this->cacheTransferNodes();
+            this->cacheTransferNodesMulti();
             this->setUpTransferGrids();
             this->transferToGrid();
         }
@@ -1261,6 +1299,7 @@ public:
 
     void simulate(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
 
+        // to grid, incompressibility
         dt = dt_;
 
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
@@ -1307,7 +1346,12 @@ public:
             }
         }
 
+        //auto start = std::chrono::high_resolution_clock::now();
         solveCollisions();
+        /*auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        std::cout << "collision: " << duration.count() << " milliseconds" << "\n";*/
 
         constrainWalls(0, numParticles);
 
@@ -1325,8 +1369,12 @@ public:
 
         //this->makeForceObjectQueriesConstantMem(forceObjectActive);
 
-        //this->transferVelocities(true);
+        //auto start = std::chrono::high_resolution_clock::now();
         this->transferMulti(true);
+        /*auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        std::cout << "to grid: " << duration.count() << " milliseconds" << "\n";*/
 
         this->updateParticleDensity();
         if (rigidObjectActive) {
@@ -1335,14 +1383,25 @@ public:
         
         //this->solveIncompressibilityRedBlack(numPressureIters, overRelaxation);
         //this->applyVorticityConfinementRedBlack();
+        
+        //start = std::chrono::high_resolution_clock::now();
         this->solveIncompressibility();
+        /*end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        std::cout << "incompressibility: " << duration.count() << " milliseconds" << "\n";*/
 
         // should be calculating vorticity confinement before the grid is solved, but calculating it after gives an artistic effect that I like, even if it's less physically accurate (vortex confinement isn't physically accurate anyways)
         //this->applyVorticityConfinementRedBlack();
 
-        //this->transferVelocities(false);
+        //start = std::chrono::high_resolution_clock::now();
         this->transferMulti(false);
+        /*end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
+        std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";*/
+
+        //start = std::chrono::high_resolution_clock::now();
         if (renderPattern == 0) {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
@@ -1390,6 +1449,10 @@ public:
         else if (generatorActive) {
             this->drawGenerator(window);
         }
+        /*end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        std::cout << "rendering: " << duration.count() << " milliseconds" << "\n";*/
     }
 
     void addToForceObjectRadius(float add) {
