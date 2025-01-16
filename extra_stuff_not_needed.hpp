@@ -159,4 +159,31 @@
                 this->v[i * n + j + 1] -= bottomType * p;
             }
         }
+    }
+    
+    void drawUVGrids(sf::RenderWindow& window) {
+        sf::VertexArray line(sf::Lines, 2);
+        int32_t n = numY;
+        for (int i = 0; i < 1.f * (WIDTH - 2 * cellSpacing) / cellSpacing; ++i) {
+            for (int j = 0; j < 1.f * (HEIGHT - 2 * cellSpacing) / cellSpacing; ++j) {
+
+                // draw u lines (left right)
+                float uX = cellSpacing + i * cellSpacing;
+                float uY = 1.5 * cellSpacing + j * cellSpacing;
+                line[0].position = sf::Vector2f(uX, uY);
+                line[0].color  = sf::Color(0, 150, 255);
+                line[1].position = sf::Vector2f(uX + u[i * n + j], uY);
+                line[1].color = sf::Color(0, 150, 255);
+                window.draw(line);
+
+                //draw v lines (top bottom)
+                float vX = 1.5 * cellSpacing + i * cellSpacing;
+                float vY = cellSpacing + j * cellSpacing;
+                line[0].position = sf::Vector2f(vX, vY);
+                line[0].color  = sf::Color::Red;
+                line[1].position = sf::Vector2f(vX, vY + v[i * n + j]);
+                line[1].color = sf::Color::Red;
+                window.draw(line);
+            }
+        }
     }*/
