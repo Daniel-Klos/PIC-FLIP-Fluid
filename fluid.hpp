@@ -34,19 +34,14 @@ class Fluid {
     bool interacting = false;
     int WIDTH;
     int HEIGHT;
-    std::vector<sf::Color> colors;
 
     static constexpr float restitution = 0.f;
     float checkSeperationDist;
     float moveDist;
-    int U_FIELD = 0;
-    int V_FIELD = 1;
    
     int FLUID_CELL = 0;
     int AIR_CELL = 1;
     int SOLID_CELL = 2;
-
-    sf::CircleShape particleDrawer;
 
     float objectRadius;
     float objectX;
@@ -179,14 +174,35 @@ class Fluid {
     std::vector<float> Adiag;
     std::vector<float> Ax;
     std::vector<float> Ay;
+    std::vector<float> precon;
+
+    sf::RectangleShape cellDrawer;
+
+    std::vector<std::vector<int>> cellGrid;
+
+    bool stop = false;
+    bool step = false;
+
+    uint32_t numThreads;
+    uint32_t particlesPerThread;
+    uint32_t numMissedParticles; 
 
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
 
+            this->numThreads = thread_pool.m_thread_count;
+            this->particlesPerThread = numParticles / numThreads;
+            this->numMissedParticles = numParticles - numThreads * particlesPerThread;
+
+            auto size = sf::Vector2f(cellSpacing, cellSpacing);
+            this->cellDrawer.setSize(size);
+            this->cellGrid.resize(numX * numY);
+
             this->Adiag.resize(numX * numY);
             this->Ax.resize(numX * numY);
             this->Ay.resize(numX * numY);
+            this->precon.resize(numX * numY);
 
             this->direction.resize(numX * numY);
             this->residual.resize(numX * numY);
@@ -241,10 +257,6 @@ public:
             this->invSpacing = 1.f / this->cellSpacing;
 
             this->radius = 0.3 * cellSpacing;
-            this->particleDrawer.setOutlineThickness(0.f);
-            this->particleDrawer.setRadius(this->radius);
-            this->particleDrawer.setOrigin(this->radius, this->radius);
-            this->particleDrawer.setFillColor(sf::Color(0, 150, 255));
 
             this->scalingFactor = 2 * radius;
 
@@ -360,6 +372,17 @@ public:
             this->allHashCells.resize(numParticles);*/
     }
 
+    void drawCells(sf::RenderWindow& window) {
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                int idx = i * numY + j;
+                cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
+                cellDrawer.setFillColor(sf::Color(cellColor[3 * idx], cellColor[3 * idx + 1], cellColor[3 * idx + 2]));
+                window.draw(cellDrawer);
+            }
+        }
+    }
+
     float clamp(float x, float min, float max) {
         if (x < min) {
             return min;
@@ -401,9 +424,11 @@ public:
         }
     }
 
-    void addObjectsToGrid()
+    void addObjectsToGrids()
     {
         grid.clear();
+        /*cellGrid.clear();
+        cellGrid.resize(numX * numY);*/
 
         const float minX = cellSpacing;
         const float maxX = WIDTH - cellSpacing;
@@ -415,7 +440,15 @@ public:
             float x = positions[2 * index];
             float y = positions[2 * index + 1];
             if (x > minX && x < maxX && y > minY && y < maxY) {
-                grid.addAtom(static_cast<int32_t>(x / scalingFactor), static_cast<int32_t>(y / scalingFactor), i);
+
+                int32_t gridX = x / scalingFactor;
+                int32_t gridY = y / scalingFactor;
+                grid.addAtom(gridX, gridY, i);
+                
+                /*int32_t cellGridX = x / cellSpacing;
+                int32_t cellGridY = y / cellSpacing;
+                cellGrid[cellGridX * numY + cellGridY].push_back(index);*/
+
             }
             ++i;
         }
@@ -576,7 +609,7 @@ public:
                     this->velocities[2 * i + 1] *= -restitution;
                 }
                 const float remove = 10; // 5
-                if (this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
+                if (this->renderPattern == 2 && this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
                     this->temperatures[i] += groundConductivity;
                 }
             }
@@ -596,12 +629,12 @@ public:
             x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
             y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
             // x0 is the grid position to the left of the particle, x1 is the position to the right of  the particle. Both can only go up to the second to last cell to the right in the     gridbecause we dont want to be changing wall velocities
-            int x0 = std::max(1, std::min((int)(std::floor((x - dx) * invSpacing)), this->numX - 1));
+            int x0 = std::max(1, std::min(static_cast<int>(std::floor((x - dx) * invSpacing)), this->numX - 2)); // - 1
             // basically x - xCell to get the weight of that cell in relation to the particle
-            // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied     by grid spacing
+            // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied by grid spacing
             float tx = ((x - dx) - x0 * cellSpacing) * invSpacing;
             // add 1 to get the cell to the right
-            int x1 = std::min(x0 + 1, this->numX - 2);
+            int x1 = std::min(x0 + 1, this->numX - 2); // - 1
             // this fixes a bug that makes water touching the left wall and ceiling explode sometimes 
             if (component == 0 && x0 == 1) {
                 x0 = x1;
@@ -610,9 +643,21 @@ public:
                 x1 = x0;
             }
             // same thing with y
-            int y0 = std::max(0, std::min((int)(std::floor((y - dy) * invSpacing)), this->numY - 2));
+            int y0 = std::max(0, std::min(static_cast<int>(std::floor((y - dy) * invSpacing)), this->numY - 2)); // - 2
             float ty = ((y - dy) - y0 * cellSpacing) * invSpacing;
-            int y1 = std::min(y0 + 1, this->numY - 1);
+            int y1 = std::min(y0 + 1, this->numY - 1); // - 1
+            // try seeing if these have any problems when CG is implemented
+            // fixes jitter when the fluid is held with the force object at the top, but also makes the fluid stick to the top so leave out. Could just only do this first one when gravity < 0
+            /*if (component == 1 && y0 == 0) {
+                y0 = y1;
+            }
+            if (component == 0 && y0 == 0) {
+                y1 = y0;
+            }*/
+            // fixes jitter when the fluid is held with the force object at the bottom, but also introduces the same gauss seidel artifact as the right side
+            /*if (component == 1 && y0 == numY - 2) {
+                y1 = y0;
+            }*/
             float sx = 1.f - tx;
             float sy = 1.f - ty;
             // weights for each corner in u/v field
@@ -677,22 +722,21 @@ public:
             // initialize outside cells to solid, every inside cell to air
         for (int i = 0; i < this->numX; ++i) {
             for (int j = 0; j < this->numY; ++j) {
-                    /*if (this->cellType[i * n + j] == SOLID_CELL) {
+                    if (this->cellType[i * n + j] == SOLID_CELL) {
                         this->cellColor[3 * (i * n + j)] = 100;
                         this->cellColor[3 * (i * n + j) + 1] = 100;
                         this->cellColor[3 * (i * n + j) + 2] = 100;
-                    }*/
+                    }
                 if (this->cellType[i * n + j] != SOLID_CELL) {
                     this->cellType[i * n + j] = AIR_CELL;
                        
-                        /*this->cellColor[3 * (i * n + j)] = 0;
+                        this->cellColor[3 * (i * n + j)] = 0;
                         this->cellColor[3 * (i * n + j) + 1] = 250;
                         this->cellColor[3 * (i * n + j) + 2] = 255;
-                        */
+                        
                 }
             }
         }
-
         // initialize all cells that particles are in to fluid
         for (int i = 0; i < this->numParticles; ++i) {
             float x = this->positions[2 * i];
@@ -707,11 +751,11 @@ public:
             if (this->cellType[cellNr] == AIR_CELL) {
                 this->cellType[cellNr] = FLUID_CELL;
                    
-                    /*
+                    
                     this->cellColor[3 * cellNr] = 0;
                     this->cellColor[3 * cellNr + 1] = 150;
                     this->cellColor[3 * cellNr + 2] = 255;
-                    */
+                    
             }
         }
     }
@@ -908,7 +952,7 @@ public:
             int x1 = std::min(x0 + 1, this->numX - 1);
             int y0 = std::max(1, std::min((int)(std::floor((y - h2) * h1)), this->numY - 2));
             float ty = ((y - h2) - y0 * h) * h1;
-            int y1 = std::min(y0 + 1, this->numY - 1);
+            int y1 = std::min(y0 + 1, this->numY - 2);
            
             float sx = 1.f - tx;
             float sy = 1.f - ty;
@@ -999,6 +1043,8 @@ public:
         const int32_t n = numY;
 
         std::fill(Adiag.begin(), Adiag.end(), 0.f);
+
+        // Ax[i] is the cell to the right, Ay[i] is the cell below 
         std::fill(Ax.begin(), Ax.end(), 0.f);
         std::fill(Ay.begin(), Ay.end(), 0.f);
 
@@ -1023,16 +1069,42 @@ public:
                 if (cellType[i * n + j - 1] == FLUID_CELL) {
                     Adiag[idx] += scale;
                 }
+
                 if (cellType[i * n + j + 1] == FLUID_CELL) {
                     Adiag[idx] += scale;
                     Ay[idx] = -scale;
+                }
+                else if (cellType[i * n + j + 1] == AIR_CELL) {
+                    Adiag[idx] += scale;
                 }
             }
         }
     }
 
     void buildPreconditioner() {
-        
+        const double tau = 0.97;
+        const double sigma = 0.25;
+        const int n = numY;
+
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+
+                if (cellType[idx] != FLUID_CELL) continue;
+
+                double e = Adiag[idx];
+
+                if (i > 0 && cellType[idx - 1] == FLUID_CELL) {
+                    double px = Ax[idx - 1] * precon[idx - 1];
+                    double py = Ay[idx - 1] * precon[idx - 1];
+                    e = e - (px * px + tau * px * py);
+                }
+            }
+        }
+    }
+
+    void matVec(std::vector<float>& ) {
+
     }
 
     void solveIncompressibilityCG() {
@@ -1043,9 +1115,9 @@ public:
         // initial guess at final changes in pressures 
         std::fill(pressure.begin(), pressure.end(), 0.f);
 
-        std::fill(residual.begin(), residual.end(), 0.f);
+        //std::fill(residual.begin(), residual.end(), 0.f);
         std::fill(Ad.begin(), Ad.end(), 0.f);
-        std::fill(direction.begin(), direction.end(), 0.f);
+        //std::fill(direction.begin(), direction.end(), 0.f);
 
         // trying to solve Ap = -b (A * pressure = divergence), where A is the discretized Laplacian, p is the unknown pressure changes in each cell, and b is the initial divergence
 
@@ -1071,7 +1143,7 @@ public:
         }
 
         // iterate
-        for (int32_t iter = 0; iter < 10; ++iter) {
+        for (int32_t iter = 0; iter < 1; ++iter) {
 
             // construct discretized laplacian A_direction (Ad) using the direction vector 
 
@@ -1093,7 +1165,7 @@ public:
 
             //--------------------------------------------------------------------------------------
             // Extra info:
-                // really, A looks like this (this would be for a 4x4 grid):
+                // really, A might look something like this (this would be for a 4x4 grid):
                 /*  [-4  1  0  0  1  0  0  0  0  0  0  0  0  0  0  0] 
                     [ 1 -4  1  0  0  1  0  0  0  0  0  0  0  0  0  0] 
                     [ 0  1 -4  1  0  0  1  0  0  0  0  0  0  0  0  0] 
@@ -1111,7 +1183,7 @@ public:
                     [ 0  0  0  0  0  0  0  0  0  0  1  0  0  1 -4  1] 
                     [ 0  0  0  0  0  0  0  0  0  0  0  1  0  0  1 -4] 
 
-                    The diagonal row of -4s is -1 times the number of non-solid/air neighbors of cell i (4 on a 2D grid), and every single other cell denoted B_ij is 1 if cell i is a neighbor of cell j, and 0 otherwise
+                    The diagonal row of -4s is -1 times the number of non-solid neighbors of cell i (4 on a 2D grid), and every single other cell denoted B_ij is 1 if cell i is a neighbor of cell j, and 0 otherwise
 
                     The overall structure of this A matrix can only be applied to a 4x4 grid because of the boundary conditions chosen (0 at the sides) 
 
@@ -1124,6 +1196,8 @@ public:
 
                         notice how A_4x4[3, 1] != A_16x16[3, 1] because in a 4x4 matrix, those cells are not neighbors, but in a 2x2 matrix, they are
 
+                        The characteristic polynomial of this matrix is (λ+2)(λ+4)^2(λ+6). All values of λ are negative, meaning this matrix is negative definite
+
                     In this code, a moderate sized grid would be 70x134. The entire laplacian matrix of this grid, A, would require 335.5 MB of memory to store. This is why you shouldn't/can't just solve the matrix using Gaussean elimination/inversion. On top of that, for large, sparse matrices, good iterative methods are faster than direct solvers, not even taking into account cache efficiency. 
                     
                     This matrix A is diagonalizable and only has negative eigenvalues, meaning it's negative-definite. 
@@ -1133,7 +1207,7 @@ public:
                     This matrix is also symmetrical, another requirement of CG, meaning that A[i, j] = A[j, i]
 
                     Why don't we just do p = A^-1 * -b?
-                        A is sparse, but its inverse is not. A^-1 would have to be explicitly stored, which, as seen before, is not feasible 
+                        A is sparse, but its inverse is not. A^-1 would have to be explicitly stored. 
                 */
             //--------------------------------------------------------------------------------------
 
@@ -1151,7 +1225,10 @@ public:
                     int32_t bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
 
                     // Use Dirichlet boundary conditions for the edges (directly assign them a value of whatever I want; all 0 in this case) 
-                    float center = -4.f * direction[idx];
+                    // If a neighbor cell is an air_cell, set its pressure to zero
+                    // If a neighbot cell is a solid cell, subtract 1 from the multiplication of the center cell (done automatically with leftType + rightType + topType + bottomType)
+                        // also handle solid cells explicitly, which is not what I'm doing 
+                    float center = -(leftType + rightType + topType + bottomType) * direction[idx];
                     float left = leftType * direction[(i - 1) * numY + j];
                     float right = rightType * direction[(i + 1) * numY + j];
                     float up = topType * direction[i * numY + j - 1];
@@ -1212,11 +1289,37 @@ public:
 
     float curl(int i, int j) {
         const int32_t n = this->numY;
-        const int32_t leftType = cellType[(i - 2) * n + j] == FLUID_CELL;
+        const float denom = 1.f / (2.f * cellSpacing);
+        const int32_t leftType = cellType[(i - 1) * n + j] == FLUID_CELL;
         const int32_t rightType = cellType[(i + 1) * n + j] == FLUID_CELL;
-        const int32_t topType = cellType[i * n + j - 2] == FLUID_CELL;
+        const int32_t topType = cellType[i * n + j - 1] == FLUID_CELL;
         const int32_t bottomType = cellType[i * n + j + 1] == FLUID_CELL;
-        return (this->v[i * n + j + 1] * bottomType - this->v[i * n + j - 1] * topType) * 0.5f - (this->u[(i + 1) * n + j] * rightType - this->u[(i - 1) * n + j] * leftType) * 0.5f;
+        if (!leftType || !rightType || !topType || !bottomType) {
+            return 0.f;
+        }
+        return ((this->v[(i + 1) * n + j] * bottomType - this->v[(i - 1) * n + j] * topType) - (this->u[i * n + j + 1] * rightType - this->u[i * n + j - 1] * leftType)) * denom;
+    }
+
+    float calcVorticitySquared(int i, int j) {
+        /*float avgCurl = 0.0f;
+        int count = 0;
+
+        for (int x = i - 1; x <= i + 1; ++x) {
+            for (int y = j - 1; y <= j + 1; ++y) {
+                if (x >= 1 && x < this->numX - 1 && y >= 1 && y < this->numY - 1) { 
+                    avgCurl += this->curl(x, y);
+                    count++;
+                }
+            }
+        }
+        if (count > 0) {
+            avgCurl /= count; 
+        }
+
+        return avgCurl * avgCurl; //std::abs(avgCurl); */
+        
+        float curl = this->curl(i, j);
+        return curl * curl;
     }
 
     void calcVorticityConfinement(bool red, int32_t startColumn, int32_t endColumn) {
@@ -1229,7 +1332,7 @@ public:
                 else {
                     if ((i + j) % 2 == 0) continue; 
                 }
-                float dx = abs(curl(i, j - 1)) - abs(curl(i, j + 1));
+                float dx = abs(curl(i, j + 1)) - abs(curl(i, j - 1));
                 float dy = abs(curl(i + 1, j)) - abs(curl(i - 1, j));
 
                 const float len = std::sqrt(dx * dx + dy * dy);
@@ -1274,18 +1377,25 @@ public:
     }
 
     void includeRigidObject(const bool mouseDown, const bool justPressed) {
+        const float extend = 20 * cellSpacing;
         if (mouseDown) {
             int n = numY;
             float vx = (objectX - objectPrevX) * 100;
             float vy = (objectY - objectPrevY) * 100;
             for (int i = 1; i < numX - 1; i++) {
                 for (int j = 1; j < numY - 1; j++) {
+                    int cellNr = i * n + j;
                     //cellType[i * n + j] = AIR_CELL;
                     float dx = (i + 0.5) * cellSpacing - objectX;
                     float dy = (j + 0.5) * cellSpacing - objectY;
 
-                    if (dx * dx + dy * dy < objectRadius *  objectRadius) {
+                    if (dx * dx + dy * dy < objectRadius * objectRadius + extend) {
                         cellType[i * n + j] = FLUID_CELL;
+
+                        this->cellColor[3 * cellNr] = 0;
+                        this->cellColor[3 * cellNr + 1] = 150;
+                        this->cellColor[3 * cellNr + 2] = 255;
+
                         this->u[i*n + j] = vx;
                         this->u[(i+1)*n + j] = vx;
                         this->v[i*n + j] = vy;
@@ -1404,6 +1514,57 @@ public:
         }
     }
 
+    void updateVertexArrayVorticity(uint32_t startIndex, uint32_t endIndex) {
+        for (uint32_t index = startIndex; index < endIndex; ++index) {
+            int i = 4 * index;
+            const float px = positions[2 * index];
+            const float py = positions[2 * index + 1];
+
+            va[i].position = {px - radius, py - radius};
+            va[i + 1].position = {px + radius, py - radius};
+            va[i + 2].position = {px + radius, py + radius};
+            va[i + 3].position = {px - radius, py + radius};
+
+            int cellGridX = px / cellSpacing;
+            int cellGridY = py / cellSpacing;
+
+            int vort = std::min(255, static_cast<int>(calcVorticitySquared(cellGridX, cellGridY) * 4)); 
+            /*if (vort < 25) {
+                vort = 0;
+            }*/
+            
+            // gradients to try out:
+            // scientific:
+            /*std::min(255, std::max(0, 2 * vort - 128)), // Red
+            std::min(255, std::max(0, 255 - std::abs(2 * vort - 255))), // Green
+            std::min(255, std::max(0, 255 - 2 * vort)), // Blue
+            255
+            */
+
+            // trippy:
+            /*
+            127 * (1 + sin(vort * 0.1)),  // Red oscillates
+            127 * (1 + sin(vort * 0.1 + 2.094)),  // Green phase-shifted
+            127 * (1 + sin(vort * 0.1 + 4.188)),  // Blue phase-shifted
+            255
+            */
+            //{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
+            //
+            sf::Color color;
+            color = sf::Color(
+                std::min(255, std::max(0, 2 * vort - 128)), // Red
+                std::min(255, std::max(0, 255 - std::abs(2 * vort - 255))), // Green
+                std::min(255, std::max(0, 255 - 2 * vort)), // Blue
+                255
+            );
+
+            va[i].color = color;
+            va[i + 1].color = color;
+            va[i + 2].color = color;
+            va[i + 3].color = color;
+        }
+    }
+
     void updateVertexArrayDiffusion(const uint32_t startIndex, const uint32_t endIndex) {
         for (uint32_t index = startIndex; index < endIndex; ++index) {
             const float s = 0.01f;
@@ -1481,19 +1642,27 @@ public:
         window.draw(va, states);
     }
 
-    void simulate(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
-
-        // order of need of optimization:
-            // 1) incompressibility -- implement conjugate gradient
-            // 2) to grid -- Don't just do both grids at the same time, but multithread the particles as well. Make a grid similar to collision grid with the proper amount of cells for each u and v grid and use those as neighbor buckets to look up
-
-        // collision, rendering, and to particles all looking great
-
-        dt = dt_;
+    void update(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
 
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
+        if (!stop || step) {
+            this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
+            step = false;
+        }
+
+        this->render(window);
+    }
+
+    void simulate(float dt_, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
+        // order of need of optimization:
+            // 1) incompressibility -- implement conjugate gradient
+            // 2) to grid -- Don't just do both grids at the same time, but multithread the particles as well. Make a grid similar to collision grid with the proper amount of cells for each u and v grid and use those as neighbor buckets to look up
+
+        // collision, rendering, and to particles all great
+
+        dt = dt_;
 
         const bool mouseDown = leftMouseDown || rightMouseDown;
 
@@ -1505,10 +1674,6 @@ public:
                 this->remove();
             }
         }*/
-
-        const uint32_t numThreads = thread_pool.m_thread_count;
-        const uint32_t particlesPerThread = numParticles / numThreads;
-        const uint32_t numMissedParticles = numParticles - numThreads * particlesPerThread;
 
         for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
@@ -1524,7 +1689,7 @@ public:
             std::fill(begin(collisions), end(collisions), 0);
         }
 
-        addObjectsToGrid();
+        addObjectsToGrids();
 
         if (forceObjectActive && mouseDown) {
             if (leftMouseDown) {
@@ -1537,6 +1702,7 @@ public:
 
         //auto start = std::chrono::high_resolution_clock::now();
         solveCollisions();
+        
         /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -1569,7 +1735,7 @@ public:
             this->includeRigidObject(leftMouseDown, justPressed);
         }
         
-        //this->applyVorticityConfinementRedBlack();
+        this->applyVorticityConfinementRedBlack();
         
         //start = std::chrono::high_resolution_clock::now();
         this->solveIncompressibility();
@@ -1592,7 +1758,12 @@ public:
 
         std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";*/
 
+    }
+
+    void render(sf::RenderWindow& window) {
         //start = std::chrono::high_resolution_clock::now();
+        //this->drawCells(window);
+
         if (renderPattern == 0) {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
@@ -1629,6 +1800,18 @@ public:
             thread_pool.waitForCompletion();
         }
 
+        else if (renderPattern == 3) {
+            for (int i = 0; i < numThreads; ++i) {
+                thread_pool.addTask([&, i]() {
+                    this->updateVertexArrayVorticity(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+                });
+            }
+
+            this->updateVertexArrayVorticity(numParticles - numMissedParticles, numParticles);
+
+            thread_pool.waitForCompletion();
+        }
+
         this->drawParticlesVertex(window);
 
         if (forceObjectActive) {
@@ -1640,6 +1823,8 @@ public:
         else if (generatorActive) {
             this->drawGenerator(window);
         }
+
+        //this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -1701,7 +1886,7 @@ public:
 
     void setNextRenderPattern() {
         this->renderPattern++;
-        if (this->renderPattern > 2) {
+        if (this->renderPattern > 3) {
             this->renderPattern = 0;
         }
     }
@@ -1742,6 +1927,22 @@ public:
         return numPressureIters;
     }
 
+    bool getStop() {
+        return this->stop;
+    }
+
+    void setStop(bool set) {
+        this->stop = set;
+    }
+
+    bool getStep() {
+        return this->step;
+    }
+
+    void setStep(bool set) {
+        this->step = set;
+    }
+
     void drawUVGrids(sf::RenderWindow& window) {
         sf::VertexArray line(sf::Lines, 2);
         int32_t n = numY;
@@ -1752,9 +1953,9 @@ public:
                 float uX = cellSpacing + i * cellSpacing;
                 float uY = 1.5 * cellSpacing + j * cellSpacing;
                 line[0].position = sf::Vector2f(uX, uY);
-                line[0].color  = sf::Color(0, 150, 255);
+                line[0].color  = sf::Color(255, 150, 0);
                 line[1].position = sf::Vector2f(uX + u[i * n + j], uY);
-                line[1].color = sf::Color(0, 150, 255);
+                line[1].color = sf::Color(255, 150, 0);
                 window.draw(line);
 
                 //draw v lines (top bottom)
