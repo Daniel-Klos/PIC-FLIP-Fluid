@@ -69,8 +69,11 @@ class Fluid {
 
     float gravity;
 
-    std::array<std::array<int, 3>, 100> gradient;
-    std::array<std::array<int, 3>, 4> colorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
+    std::array<std::array<int, 3>, 100> velGradient;
+    std::array<std::array<int, 3>, 4> velColorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
+
+    std::array<std::array<int, 3>, 100> vortGradient;
+    std::array<std::array<int, 3>, 4> vortColorMap{{{0, 0, 128}, {0, 128, 255}, {255, 128, 0}, {255, 255, 0}}};
 
     std::array<std::array<int, 3>, 100> tempgradient;
     std::array<std::array<int, 3>, 4> tempMap{{{0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}}};
@@ -155,9 +158,13 @@ class Fluid {
     std::vector<float> d3;
 
     std::vector<float> temperatures;
-    float groundConductivity = 30.f; // 20
-    float interConductivity = 15.f;  // 15
-    float fireStrength = 100.f;      // 75
+    // how quickly the ground transfers heat to the particles
+    float groundConductivity = 100.f; // 30
+    // how quickly particles transfer heat between themselves
+    float interConductivity = 25.f;  // 15
+    // how quickly particles accelerate upwards due to heat
+    float fireStrength = 75.f;      // 100
+    // how quickly heated particles lose that heat
     float tempDiffusion = 0.1f;      // 0.1
 
     int32_t renderPattern = 0;
@@ -166,15 +173,17 @@ class Fluid {
 
     std::vector<uint32_t> collisions;
 
-    std::vector<float> direction;
-    std::vector<float> residual;
-    std::vector<float> pressure;
-    std::vector<float> Ad;
+    std::vector<double> direction;
+    std::vector<double> residual;
+    std::vector<double> pressure;
+    std::vector<double> Ad;
 
-    std::vector<float> Adiag;
-    std::vector<float> Ax;
-    std::vector<float> Ay;
-    std::vector<float> precon;
+    std::vector<double> Adiag;
+    std::vector<double> Ax;
+    std::vector<double> Ay;
+    std::vector<double> precon;
+    std::vector<double> z;
+    std::vector<double> search;
 
     sf::RectangleShape cellDrawer;
 
@@ -203,6 +212,8 @@ public:
             this->Ax.resize(numX * numY);
             this->Ay.resize(numX * numY);
             this->precon.resize(numX * numY);
+            this->z.resize(numX * numY);
+            this->search.resize(numX * numY);
 
             this->direction.resize(numX * numY);
             this->residual.resize(numX * numY);
@@ -335,32 +346,28 @@ public:
             this->generatorDrawer.setOutlineColor(sf::Color::Red); 
 
             // linearly interpolate between the values in colorMap to create a gradient array 
-            float num_colors = colorMap.size() - 1; // number of colors - 1
-            float num_steps = 1.f * gradient.size() / num_colors; //num_steps = 50 * key_range
+            float num_colors = velColorMap.size() - 1; // number of colors - 1
+            float num_steps = 1.f * velGradient.size() / num_colors; //num_steps = 50 * key_range
             int index = 0;
             for (int i = 0; i < num_colors; ++i) {  
                 for (int x = 0; x < num_steps; ++x) {
                     float t = 1.f * x / num_steps;  // Interpolation factor
                     // Linear interpolation for r, g, b values between colorMap[i] andcolorMap [i+1]
-                    int r = (int)(colorMap[i][0] * (1 - t) + colorMap[i + 1][0] * t);
-                    int g = (int)(colorMap[i][1] * (1 - t) + colorMap[i + 1][1] * t);
-                    int b = (int)(colorMap[i][2] * (1 - t) + colorMap[i + 1][2] * t);
-                    gradient[index] = std::array<int, 3>{r, g, b};
-                    index++;
-                }
-            }
+                    int r = (int)(velColorMap[i][0] * (1 - t) + velColorMap[i + 1][0] * t);
+                    int g = (int)(velColorMap[i][1] * (1 - t) + velColorMap[i + 1][1] * t);
+                    int b = (int)(velColorMap[i][2] * (1 - t) + velColorMap[i + 1][2] * t);
+                    velGradient[index] = std::array<int, 3>{r, g, b};
 
-            num_colors = tempMap.size() - 1; // number of colors - 1
-            num_steps = 1.f * tempgradient.size() / num_colors; //num_steps = 50 * key_range
-            index = 0;
-            for (int i = 0; i < num_colors; ++i) {  
-                for (int x = 0; x < num_steps; ++x) {
-                    float t = 1.f * x / num_steps;  // Interpolation factor
-                    // Linear interpolation for r, g, b values between colorMap[i] andcolorMap [i+1]
-                    int r = (int)(tempMap[i][0] * (1 - t) + tempMap[i + 1][0] * t);
-                    int g = (int)(tempMap[i][1] * (1 - t) + tempMap[i + 1][1] * t);
-                    int b = (int)(tempMap[i][2] * (1 - t) + tempMap[i + 1][2] * t);
+                    r = (int)(tempMap[i][0] * (1 - t) + tempMap[i + 1][0] * t);
+                    g = (int)(tempMap[i][1] * (1 - t) + tempMap[i + 1][1] * t);
+                    b = (int)(tempMap[i][2] * (1 - t) + tempMap[i + 1][2] * t);
                     tempgradient[index] = std::array<int, 3>{r, g, b};
+
+                    r = (int)(vortColorMap[i][0] * (1 - t) + vortColorMap[i + 1][0] * t);
+                    g = (int)(vortColorMap[i][1] * (1 - t) + vortColorMap[i + 1][1] * t);
+                    b = (int)(vortColorMap[i][2] * (1 - t) + vortColorMap[i + 1][2] * t);
+                    vortGradient[index] = std::array<int, 3>{r, g, b};
+
                     index++;
                 }
             }
@@ -412,7 +419,7 @@ public:
             this->positions[2 * i + 1] += this->velocities[2 * i + 1] * dt;
             this->velocities[2 * i + 1] += gravity * dt;
 
-            if (this->fireActive && this->renderPattern == 2 && positions[2 * i + 1] < HEIGHT - cellSpacing - 10) {
+            if (this->fireActive && this->renderPattern == 3 && positions[2 * i + 1] < HEIGHT - cellSpacing - 10) {
                 this->velocities[2 * i + 1] -= fireStrength * temperatures[i] * dt;
                 if (this->temperatures[i] > 0) {
                     this->temperatures[i] -= tempDiffusion;
@@ -609,7 +616,7 @@ public:
                     this->velocities[2 * i + 1] *= -restitution;
                 }
                 const float remove = 10; // 5
-                if (this->renderPattern == 2 && this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
+                if (this->renderPattern == 3 && this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
                     this->temperatures[i] += groundConductivity;
                 }
             }
@@ -1030,12 +1037,23 @@ public:
         }
     }
 
-    float dot(const std::vector<float>& a, const std::vector<float>& b) {
-        float result = 0.0f;
-        for (int i = 0; i < a.size(); ++i) {
-            result += a[i] * b[i];
+    void setUpResidual() {
+        double scale = 1.0 / cellSpacing;
+        const int32_t n = numY;
+
+        for (int32_t i = 1; i < numX - 1; ++i) {
+            for (int32_t j = 1; j < numY - 1; ++j) {
+                const int32_t idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL)  {
+                    continue;
+                }
+
+                residual[idx] = -scale * (this->u[(i + 1) * n + j] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
+
+                // direction = -b, happens to be equal to residual in this case 
+                direction[idx] = residual[idx];
+            }
         }
-        return result;
     }
 
     void setUpA() {
@@ -1094,197 +1112,166 @@ public:
 
                 double e = Adiag[idx];
 
-                if (i > 0 && cellType[idx - 1] == FLUID_CELL) {
+                if (i > 1 && cellType[idx - 1] == FLUID_CELL) {
                     double px = Ax[idx - 1] * precon[idx - 1];
                     double py = Ay[idx - 1] * precon[idx - 1];
-                    e = e - (px * px + tau * px * py);
+                    e -= (px * px + tau * px * py);
                 }
+
+                if (j > 1 && cellType[idx - n] == FLUID_CELL) {
+                    double px = Ax[idx - n] * precon[idx - n];
+                    double py = Ay[idx - n] * precon[idx - n];
+                    e -= (py * py + tau * px * py);
+                }
+
+                if (e < sigma * Adiag[idx]) {
+                    e = Adiag[idx];
+                }
+
+                precon[idx] = 1.0 / std::sqrt(e);
             }
         }
     }
 
-    void matVec(std::vector<float>& ) {
-
-    }
-
-    void solveIncompressibilityCG() {
+    void applyPreconditioner(std::vector<double>& dst, std::vector<double>& a) {
         const int32_t n = numY;
 
-        // use doubles for everything when using conjugate gradient; less roundoff error = faster convergence 
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int32_t idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
 
-        // initial guess at final changes in pressures 
-        std::fill(pressure.begin(), pressure.end(), 0.f);
+                double t = a[idx];
 
-        //std::fill(residual.begin(), residual.end(), 0.f);
-        std::fill(Ad.begin(), Ad.end(), 0.f);
-        //std::fill(direction.begin(), direction.end(), 0.f);
-
-        // trying to solve Ap = -b (A * pressure = divergence), where A is the discretized Laplacian, p is the unknown pressure changes in each cell, and b is the initial divergence
-
-        // construct b (set the residual equal to b and the direction equal to residual)
-        float scale = 1.f / cellSpacing;
-        for (int32_t i = 1; i < numX - 1; ++i) {
-            for (int32_t j = 1; j < numY - 1; ++j) {
-                const int32_t idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL)  {
-                    // set non-fluid cells to zero so that their values doesn't mess with the later inner products
-                    /*residual[idx] = 0.0f;
-                    direction[idx] = 0.0f;
-                    Ad[idx] = 0.0f;*/
-                    continue;
+                if (i > 1 && cellType[idx - 1] == FLUID_CELL) {
+                    t -= Ax[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                }
+                if (j > 1 && cellType[idx - n] == FLUID_CELL) {
+                    t -= Ay[idx - n] * precon[idx - n] * dst[idx - n];
                 }
 
-                // residual is -b - Ap, but A starts out as zero because our initial guess at the unknown pressures is just the zero vector. 
-                residual[idx] = -scale * (this->u[(i + 1) * n + j] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
-
-                // direction = -b, happens to be equal to residual in this case 
-                direction[idx] = residual[idx];
+                dst[idx] = t * precon[idx];
             }
         }
 
-        // iterate
-        for (int32_t iter = 0; iter < 1; ++iter) {
+        for (int i = numX - 2; i > 0; --i) {
+            for (int j = numY - 2; j > 0; --j) {
+                int32_t idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
 
-            // construct discretized laplacian A_direction (Ad) using the direction vector 
+                double t = dst[idx];
 
-            // we don't actually have to store the gigantic laplacian matrix; think of Ad as the resulting vector of the A * direction matrix multiplication 
-
-            // and direction looks something like this:
-                /*
-                    [1]
-                    [2]
-                    [1]
-                    [4]
-                    [3]
-                    [5]
-                    [.]
-                    [.]
-                */
-
-            // The A * d multiplication results in the Ad vector below
-
-            //--------------------------------------------------------------------------------------
-            // Extra info:
-                // really, A might look something like this (this would be for a 4x4 grid):
-                /*  [-4  1  0  0  1  0  0  0  0  0  0  0  0  0  0  0] 
-                    [ 1 -4  1  0  0  1  0  0  0  0  0  0  0  0  0  0] 
-                    [ 0  1 -4  1  0  0  1  0  0  0  0  0  0  0  0  0] 
-                    [ 0  0  1 -4  0  0  0  1  0  0  0  0  0  0  0  0] 
-                    [ 1  0  0  0 -4  1  0  0  1  0  0  0  0  0  0  0] 
-                    [ 0  1  0  0  1 -4  1  0  0  1  0  0  0  0  0  0] 
-                    [ 0  0  1  0  0  1 -4  1  0  0  1  0  0  0  0  0] 
-                    [ 0  0  0  1  0  0  1 -4  0  0  0  1  0  0  0  0] 
-                    [ 0  0  0  0  1  0  0  0 -4  1  0  0  1  0  0  0] 
-                    [ 0  0  0  0  0  1  0  0  1 -4  1  0  0  1  0  0] 
-                    [ 0  0  0  0  0  0  1  0  0  1 -4  1  0  0  1  0] 
-                    [ 0  0  0  0  0  0  0  1  0  0  1 -4  1  0  0  1] 
-                    [ 0  0  0  0  0  0  0  0  1  0  0  1 -4  1  0  0] 
-                    [ 0  0  0  0  0  0  0  0  0  1  0  0  1 -4  1  0] 
-                    [ 0  0  0  0  0  0  0  0  0  0  1  0  0  1 -4  1] 
-                    [ 0  0  0  0  0  0  0  0  0  0  0  1  0  0  1 -4] 
-
-                    The diagonal row of -4s is -1 times the number of non-solid neighbors of cell i (4 on a 2D grid), and every single other cell denoted B_ij is 1 if cell i is a neighbor of cell j, and 0 otherwise
-
-                    The overall structure of this A matrix can only be applied to a 4x4 grid because of the boundary conditions chosen (0 at the sides) 
-
-                        for example, here's A for a 2x2 grid:
-
-                            [-4  1  1  0]
-                            [1  -4  0  1]
-                            [1   0 -4  1]
-                            [0   1  1 -4] 
-
-                        notice how A_4x4[3, 1] != A_16x16[3, 1] because in a 4x4 matrix, those cells are not neighbors, but in a 2x2 matrix, they are
-
-                        The characteristic polynomial of this matrix is (λ+2)(λ+4)^2(λ+6). All values of λ are negative, meaning this matrix is negative definite
-
-                    In this code, a moderate sized grid would be 70x134. The entire laplacian matrix of this grid, A, would require 335.5 MB of memory to store. This is why you shouldn't/can't just solve the matrix using Gaussean elimination/inversion. On top of that, for large, sparse matrices, good iterative methods are faster than direct solvers, not even taking into account cache efficiency. 
-                    
-                    This matrix A is diagonalizable and only has negative eigenvalues, meaning it's negative-definite. 
-
-                        CG only works for positive-definite matrices, so we just flip the sign of A to make it positive definite, and then swap the signs of A and b, which is why the sign of b is negative (Ap = b ---> -Ap = b ---> Ap = -b)
-
-                    This matrix is also symmetrical, another requirement of CG, meaning that A[i, j] = A[j, i]
-
-                    Why don't we just do p = A^-1 * -b?
-                        A is sparse, but its inverse is not. A^-1 would have to be explicitly stored. 
-                */
-            //--------------------------------------------------------------------------------------
-
-            const float invSqrCellSpacing = 1.f / (cellSpacing * cellSpacing);
-
-            for (int32_t i = 1; i < numX - 1; ++i) {
-                for (int32_t j = 1; j < numY - 1; ++j) {
-                    int32_t idx = i * numY + j;
-
-                    if (cellType[idx] != FLUID_CELL) continue;
-
-                    int32_t leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
-                    int32_t rightType = cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
-                    int32_t topType = cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
-                    int32_t bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
-
-                    // Use Dirichlet boundary conditions for the edges (directly assign them a value of whatever I want; all 0 in this case) 
-                    // If a neighbor cell is an air_cell, set its pressure to zero
-                    // If a neighbot cell is a solid cell, subtract 1 from the multiplication of the center cell (done automatically with leftType + rightType + topType + bottomType)
-                        // also handle solid cells explicitly, which is not what I'm doing 
-                    float center = -(leftType + rightType + topType + bottomType) * direction[idx];
-                    float left = leftType * direction[(i - 1) * numY + j];
-                    float right = rightType * direction[(i + 1) * numY + j];
-                    float up = topType * direction[i * numY + j - 1];
-                    float down = bottomType * direction[i * numY + j + 1];
-
-                    Ad[idx] = -(center * invSqrCellSpacing + left + right + down + up) * invSqrCellSpacing;
+                if (i < numX - 2 && cellType[idx + 1] == FLUID_CELL) {
+                    t -= Ax[idx] * precon[idx] * dst[idx + 1];
                 }
-            }
+                if (j < numY - 2 && cellType[idx + n] == FLUID_CELL) {
+                    t -= Ay[idx] * precon[idx] * dst[idx + n];
+                }
 
-            // α = (residual * residual) / (A_direction * direction)
-            // residual * residual
-            float alphaNumerator = std::inner_product(residual.begin(), residual.end(), residual.begin(), 0.f);
-
-            // A_direction * direction
-            float alphaDenominator = std::inner_product(direction.begin(), direction.end(), Ad.begin(), 0.f);
-
-            float alpha = alphaNumerator / alphaDenominator;
-
-            for (int i = 0; i < numX * numY; ++i) {
-                if (cellType[i] != FLUID_CELL) continue;
-                pressure[i] += alpha * direction[i];
-            }
-
-            std::vector<float> r_old = residual;
-
-            for (int i = 0; i < numX * numY; ++i) {
-                if (cellType[i] != FLUID_CELL) continue;
-                residual[i] -= alpha * Ad[i];
-            }
-
-            //float dot = std::inner_product(residual.begin(), residual.end(), r_old.begin(), 0.f);
-            //std::cout << dot << "\n";
-
-            // β = (residual * residual) / (old_residual * old_residual) 
-            float beta = std::inner_product(residual.begin(), residual.end(), residual.begin(), 0.0f) / alphaNumerator;
-
-            for (int i = 0; i < numX * numY; ++i) {
-                if (cellType[i] != FLUID_CELL) continue;
-                direction[i] = residual[i] + beta * direction[i];
+                dst[idx] = t * precon[idx];
             }
         }
+    }
 
-        //std::cout << "\n\n\n";
+    void matVec(std::vector<double>& dst, std::vector<double>& b) {
+        int32_t n = numY;
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int32_t idx = i * n + j;
+                
+                double t = Adiag[idx] * b[idx];
+                if (i > 1) {
+                    t += Ax[idx - 1] * b[idx - 1];
+                }
+                if (j > 1) {
+                    t += Ay[idx - n] * b[idx - n];
+                }
+                if (i < numX - 2) {
+                    t += Ax[idx] * b[idx + 1];
+                }
+                if (j < numY - 2) {
+                    t += Ay[idx] * b[idx + n];
+                }
 
-        // u^(n+1)_(i+1/2, j) = u^(n)_(i+1/2, j) - Δt(p_(i+1, j) - p(i, j))
-        // v^(n+1)_(i, j+1/2) = v^(n)_(i, j+1/2) - Δt(p_(i, j+1) - p(i, j))
-        scale = dt / cellSpacing;
+                dst[idx] = t;
+            }
+        }
+    }
+
+    void scaledAdd(std::vector<double>& dst, std::vector<double>& a, std::vector<double>& b, double c) {
+        for (int i = 0; i < (numX - 1) * (numY - 1); ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                dst[i] = a[i] + b[i] * c;
+            }
+        }
+    }
+
+    double dotProduct(std::vector<double>& a, std::vector<double>& b) {
+        double result = 0.0;
+        for (int i = 0; i < (numX - 1) * (numY - 1); ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                result += a[i] + b[i];
+            }
+        }
+        return result;
+    }
+
+    void PCGproject() {
+
+        std::fill(pressure.begin(), pressure.end(), 0.0);
+        std::fill(search.begin(), search.end(), 0.0);
+        std::fill(z.begin(), z.end(), 0.0);
+
+        applyPreconditioner(z, residual);
+
+        std::copy(z.begin(), z.end(), search.begin());
+
+        double sigma = dotProduct(z, residual);
+
+        for (int iter = 0; iter < 10; ++iter) {
+            matVec(z, search);
+
+            double alpha = sigma / dotProduct(z, search);
+            scaledAdd(pressure, pressure, search, alpha);
+            scaledAdd(residual, residual, z, -alpha);
+
+            applyPreconditioner(z, residual);
+
+            double sigmaNew = dotProduct(z, residual);
+            scaledAdd(search, z, search, sigmaNew / sigma);
+            sigma = sigmaNew;
+        }
+    }
+
+    void applyPressure() {
+        int32_t n = numY;
+        float scale = dt / cellSpacing;
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
-                u[idx] -= scale * (pressure[(i + 1) * n + j] - pressure[idx]);
-                v[idx] -= scale * (pressure[idx + 1] - pressure[idx]);
+                //u[idx] -= scale * (pressure[(i + 1) * n + j] - pressure[idx]);
+                //v[idx] -= scale * (pressure[idx + 1] - pressure[idx]);
+                u[idx] -= scale * (pressure[idx]);
+                v[idx] -= scale * (pressure[idx]);
+                u[(i + 1) * n + j] += scale * (pressure[idx]);
+                v[idx + 1] += scale * (pressure[idx]);
             }
         }
+    }
+
+    void updatePressurePCG() {
+        setUpResidual();
+        //std::cout << 1;
+        setUpA();
+        //std::cout << 2;
+        buildPreconditioner();
+        //std::cout << 3;
+        PCGproject();
+        //std::cout << 4;
+        applyPressure();
+        //std::cout << 5;
     }
 
     float curl(int i, int j) {
@@ -1301,25 +1288,8 @@ public:
     }
 
     float calcVorticitySquared(int i, int j) {
-        /*float avgCurl = 0.0f;
-        int count = 0;
-
-        for (int x = i - 1; x <= i + 1; ++x) {
-            for (int y = j - 1; y <= j + 1; ++y) {
-                if (x >= 1 && x < this->numX - 1 && y >= 1 && y < this->numY - 1) { 
-                    avgCurl += this->curl(x, y);
-                    count++;
-                }
-            }
-        }
-        if (count > 0) {
-            avgCurl /= count; 
-        }
-
-        return avgCurl * avgCurl; //std::abs(avgCurl); */
-        
         float curl = this->curl(i, j);
-        return curl * curl;
+        return std::abs(curl);// * curl;
     }
 
     void calcVorticityConfinement(bool red, int32_t startColumn, int32_t endColumn) {
@@ -1491,6 +1461,7 @@ public:
     }
 
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
+        int32_t velGradientSize = velGradient.size() - 1;
         for (uint32_t index = startIndex; index < endIndex; ++index) {
             int i = 4 * index;
             const float px = positions[2 * index];
@@ -1505,7 +1476,7 @@ public:
 
             int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 15000; 
             
-            color = sf::Color(gradient[std::min(gradient.size() - 1, static_cast<unsigned long long>(vel))][0], gradient[std::min(gradient.size() - 1, static_cast<unsigned long long>(vel))][1], gradient[std::min(gradient.size() - 1, static_cast<unsigned long long>(vel))][2], 255);
+            color = sf::Color(velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][0], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][1], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][2], 255);
 
             va[i].color = color;
             va[i + 1].color = color;
@@ -1515,6 +1486,7 @@ public:
     }
 
     void updateVertexArrayVorticity(uint32_t startIndex, uint32_t endIndex) {
+        int32_t vortGradientSize = vortGradient.size() - 1;
         for (uint32_t index = startIndex; index < endIndex; ++index) {
             int i = 4 * index;
             const float px = positions[2 * index];
@@ -1528,35 +1500,10 @@ public:
             int cellGridX = px / cellSpacing;
             int cellGridY = py / cellSpacing;
 
-            int vort = std::min(255, static_cast<int>(calcVorticitySquared(cellGridX, cellGridY) * 4)); 
-            /*if (vort < 25) {
-                vort = 0;
-            }*/
-            
-            // gradients to try out:
-            // scientific:
-            /*std::min(255, std::max(0, 2 * vort - 128)), // Red
-            std::min(255, std::max(0, 255 - std::abs(2 * vort - 255))), // Green
-            std::min(255, std::max(0, 255 - 2 * vort)), // Blue
-            255
-            */
-
-            // trippy:
-            /*
-            127 * (1 + sin(vort * 0.1)),  // Red oscillates
-            127 * (1 + sin(vort * 0.1 + 2.094)),  // Green phase-shifted
-            127 * (1 + sin(vort * 0.1 + 4.188)),  // Blue phase-shifted
-            255
-            */
-            //{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
-            //
+            float vort = static_cast<float>(std::min(255, static_cast<int>(calcVorticitySquared(cellGridX, cellGridY) * 5))); 
             sf::Color color;
-            color = sf::Color(
-                std::min(255, std::max(0, 2 * vort - 128)), // Red
-                std::min(255, std::max(0, 255 - std::abs(2 * vort - 255))), // Green
-                std::min(255, std::max(0, 255 - 2 * vort)), // Blue
-                255
-            );
+
+            color = sf::Color(vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][0], vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][1], vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][2], 255);
 
             va[i].color = color;
             va[i + 1].color = color;
@@ -1578,7 +1525,7 @@ public:
             va[i + 2].position = {px + radius, py + radius};
             va[i + 3].position = {px - radius, py + radius};
 
-            particleColors[3 * index] = clamp(this->particleColors[3    * index] - s, 0, 255);
+            particleColors[3 * index] = clamp(this->particleColors[3 * index] - s, 0, 255);
             particleColors[3 * index + 1] = clamp(this->particleColors  [3 * index + 1] - s, 0, 255);
             particleColors[3 * index + 2] = clamp(this->particleColors  [3 * index + 2] + s, 0, 255);
 
@@ -1729,17 +1676,15 @@ public:
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         std::cout << "to grid: " << duration.count() << " milliseconds" << "\n";*/
-
         this->updateParticleDensity();
         if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
-        
         this->applyVorticityConfinementRedBlack();
         
         //start = std::chrono::high_resolution_clock::now();
         this->solveIncompressibility();
-        //this->solveIncompressibilityCG();
+        //this->updatePressurePCG();
 
         //this->drawUVGrids(window);
         //this->solveIncompressibilityCG();
@@ -1791,11 +1736,11 @@ public:
         else if (renderPattern == 2) {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
-                    this->updateVertexArrayTemperature(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+                    this->updateVertexArrayVorticity(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
                 });
             }
 
-            this->updateVertexArrayTemperature(numParticles - numMissedParticles, numParticles);
+            this->updateVertexArrayVorticity(numParticles - numMissedParticles, numParticles);
 
             thread_pool.waitForCompletion();
         }
@@ -1803,11 +1748,11 @@ public:
         else if (renderPattern == 3) {
             for (int i = 0; i < numThreads; ++i) {
                 thread_pool.addTask([&, i]() {
-                    this->updateVertexArrayVorticity(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+                    this->updateVertexArrayTemperature(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
                 });
             }
 
-            this->updateVertexArrayVorticity(numParticles - numMissedParticles, numParticles);
+            this->updateVertexArrayTemperature(numParticles - numMissedParticles, numParticles);
 
             thread_pool.waitForCompletion();
         }
