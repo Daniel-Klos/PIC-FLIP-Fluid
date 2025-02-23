@@ -26,7 +26,7 @@ int main()
     // seperationinit is the starting seperation for the particles. make sure that no particles are intersecting and no particles are outside of the bounds of the sim upon initialization. you want them to be evenly spaced out at the start so that a good density sample can be taken
     // vorticitystrength is how strong vorticity confinement forces are if you choose to include that in the sim 
 
-    // 2) experiment
+    // experiment
     /*int numParticles = 15000; 
     float gravity = 5500.f; 
     float divergenceModifier = 8.5f; 
@@ -37,7 +37,7 @@ int main()
     float seperationInit = 2.7f;
     float vorticityStrength = 10.5f;//19.5f; */
 
-    // 1) space
+    // space
     /*int numParticles = 1000; 
     float gravity = 0.f; 
     float divergenceModifier = 15.f; 
@@ -48,7 +48,7 @@ int main()
     float seperationInit = 2.7f;
     float vorticityStrength = 4.f;*/
 
-    // 1) lots
+    // lots
     /*int32_t numParticles = 25000; 
     float gravity = 5400.f; 
     float divergenceModifier = 9.5f; 
@@ -59,7 +59,7 @@ int main()
     float seperationInit = 2.4f;
     float vorticityStrength = 0.f;*/
 
-    // 2) casual
+    // casual
     int32_t numParticles = 15000; 
     float gravity = 5500.f; // 5500
     float divergenceModifier = 8.5f; 
@@ -81,7 +81,7 @@ int main()
     float seperationInit = 4.5f; // 3.5 for 50, 4.5 for 40
     float vorticityStrength = 19.5f; */
 
-    // 2.5) fire
+    // fire
     /*int32_t numParticles = 14500; //13000
     float gravity = 5500.f; 
     float divergenceModifier = 40.f; 
@@ -92,7 +92,7 @@ int main()
     float seperationInit = 4.13f; 
     float vorticityStrength = 5.f;//19.5f; */
 
-    // 2.75) grid test
+    // grid test
     /*int32_t numParticles = 30000; 
     float gravity = 5500.f; 
     float divergenceModifier = 30.f; // 8.5 for 15000 
@@ -103,7 +103,7 @@ int main()
     float seperationInit = 1.9f; // 1.9 for 100, 2.4 for 80
     float vorticityStrength = 5.f;//19.5f; */
 
-    // 4) a lot
+    // a lot
     /*int numParticles = 26400; 
     float gravity = 4500.f; 
     float divergenceModifier = 10.f;
@@ -114,7 +114,7 @@ int main()
     float seperationInit = 2.f;
     float vorticityStrength = 150.f;*/
 
-    // 4.5) put laptop on performance mode
+    // put laptop on performance mode
     /*int numParticles = 35000; 
     float gravity = 4500.f; // 4500
     float divergenceModifier = 17.f;
@@ -146,7 +146,7 @@ int main()
     float seperationInit = 3.9f;
     float vorticityStrength = 2.f;*/
 
-    // 5) fire hazard 
+    // fire hazard 
     /*int numParticles = 50000; 
     float gravity = 4700.f; 
     float divergenceModifier = 8.5f; 
@@ -157,7 +157,7 @@ int main()
     float seperationInit = 1.95f;
     float vorticityStrength = 2.f;*/
 
-    // 2) low
+    // low
     /*int numParticles = 5000; 
     float gravity = 5500.f; // 5500
     float divergenceModifier = 1.f; 
