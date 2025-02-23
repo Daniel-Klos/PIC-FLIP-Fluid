@@ -8,9 +8,10 @@ Controls:
 -   Press 1 for an interactive rigid object and 2 for a force object.
 -   Press s to bias the simulation towards pic, and b to bias the simulation towards flip.
 -   Press r to decrease the force object radius, and t to increase
--   Press w to decrease the vorticity, and e to increase it
+-   Press w to decrease the vorticity confinement, and e to increase it
 -   Press d to decrease the divergence modifier, c to increase it
--   Press f to switch between velocity rendering and diffusion rendering
+-   Press a to switch between diffusion rendering, velocity rendering, vorticity rendering and temperature rendering
+    - While in temperature rendering mode, press f to turn on fire mode
 -   Press q to exit the simulation
 
 This implementation also includes vorticity confinement.
