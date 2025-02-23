@@ -16,7 +16,7 @@ Controls:
 
 This implementation also includes vorticity confinement.
 
-The simulation is able to run 30k particles at around 80 fps, as you can see in the pictures below.
+The simulation is able to run 35k particles at around 80 fps, as you can see in the pictures below.
 
 ![Screenshot 2024-11-11 000055](https://github.com/user-attachments/assets/b5d76477-b647-44a8-98c6-88b33f32bd13)
 
