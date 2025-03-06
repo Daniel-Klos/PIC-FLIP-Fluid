@@ -73,7 +73,7 @@ class Fluid {
     std::array<std::array<int, 3>, 4> velColorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
 
     std::array<std::array<int, 3>, 100> vortGradient;
-    std::array<std::array<int, 3>, 4> vortColorMap{{{0, 0, 128}, {0, 128, 255}, {255, 128, 0}, {255, 255, 0}}};
+    std::array<std::array<int, 3>, 4> vortColorMap{{{0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
 
     std::array<std::array<int, 3>, 100> tempgradient;
     std::array<std::array<int, 3>, 4> tempMap{{{0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}}};
@@ -86,7 +86,7 @@ class Fluid {
     // ice: {0, 102, 204}, {173, 216, 230}, {224, 255, 255}, {255, 250, 250}
     // lava: {128, 0, 0}, {255, 69, 0}, {255, 140, 0}, {255, 215, 0}
     // deep space: {0, 0, 32}, {64, 0, 128}, {128, 0, 255}, {192, 192, 255}
-    // dark blue: {0, 0, 128}, {0, 128, 255}, {255, 128, 0}, {255, 255, 0}
+    // dark blue orange: {0, 0, 128}, {0, 128, 255}, {255, 128, 0}, {255, 255, 0}
     // lightning mcqueen: {255, 0, 0}, {255, 69, 0}, {255, 165, 0}, {255, 255, 0}
     // rainbow: {255, 0, 0}, {255, 255, 0}, {0, 255, 0}, {0, 200, 255} 
 
@@ -196,9 +196,26 @@ class Fluid {
     uint32_t particlesPerThread;
     uint32_t numMissedParticles; 
 
+    bool solidDrawing = false;
+
+    std::vector<float> phiGrid;
+
+    int n;
+
+    sf::Font font;
+
+    sf::Text text;
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
+
+            font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
+            text.setFont(font);
+            text.setPosition(10, 10);
+            text.setFillColor(sf::Color::White);
+
+            this->phiGrid.resize(numX * numY);
 
             this->numThreads = thread_pool.m_thread_count;
             this->particlesPerThread = numParticles / numThreads;
@@ -310,7 +327,7 @@ public:
                 }
             }
 
-            int n = this->numY;
+            n = this->numY;
             for (int i = 0; i < this->numX; ++i) {
                 for (int j = 0; j < this->numY; ++j) {
                     if (i == 0 || j == 0 || i == this->numX - 1 || j == this->numY - 1) {
@@ -372,6 +389,8 @@ public:
                 }
             }
 
+            computeSDF();
+
             /*this->spacing = 2 * this->radius;
             this->tableSize = 2 * numParticles;
             this->cellCount.resize(this->tableSize + 1);
@@ -383,9 +402,11 @@ public:
         for (int i = 0; i < numX; ++i) {
             for (int j = 0; j < numY; ++j) {
                 int idx = i * numY + j;
-                cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
-                cellDrawer.setFillColor(sf::Color(cellColor[3 * idx], cellColor[3 * idx + 1], cellColor[3 * idx + 2]));
-                window.draw(cellDrawer);
+                if (cellType[idx] == SOLID_CELL) {
+                    cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
+                    cellDrawer.setFillColor(sf::Color(cellColor[3 * idx], cellColor[3 * idx + 1], cellColor[3 * idx + 2]));
+                    window.draw(cellDrawer);
+                }
             }
         }
     }
@@ -615,7 +636,7 @@ public:
                 if (this->velocities[2 * i + 1] > 0) {
                     this->velocities[2 * i + 1] *= -restitution;
                 }
-                const float remove = 10; // 5
+                const float remove = 10.f; // 5
                 if (this->renderPattern == 3 && this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
                     this->temperatures[i] += groundConductivity;
                 }
@@ -623,8 +644,159 @@ public:
         }
     }
 
+    void initializePhiGrid() {
+        const float positive = std::max(numX, numY) / 2;
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                if (cellType[i * numY + j] == SOLID_CELL) {
+                    phiGrid[i * numY + j] = -1.f;
+                } else {
+                    phiGrid[i * numY + j] = positive;
+                }
+            }
+        }
+    }
+    
+    void fastSweepLoop(int startX, int endX, int startY, int endY, int directionX, int directionY) {
+        for (int i = startX; i != endX; i += directionX) {
+            for (int j = startY; j != endY; j += directionY) {
+                if (phiGrid[i * numY + j] == 0.0f) continue; // Skip boundary cells
+    
+                float phiX = std::min(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
+                float phiY = std::min(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
+                //float phiX2 = std::max(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
+                //float phiY2 = std::max(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
+
+                bool isInterior = phiGrid[i * n + j] < 0;
+
+                float newPhi = isInterior ? -1.0f + std::max(phiX, phiY) : 1.0f + std::min(phiX, phiY);
+                
+                phiGrid[i * numY + j] = isInterior ? std::max(phiGrid[i * numY + j], newPhi) : std::min(phiGrid[i * numY + j], newPhi);
+            }
+        }
+    }
+    
+    void fastSweep() {
+        fastSweepLoop(0, numX, 0, numY, 1, 1);
+        fastSweepLoop(numX - 1, -1, numY - 1, -1, -1, -1);
+        fastSweepLoop(0, numX, numY - 1, -1, 1, -1);
+        fastSweepLoop(numX - 1, -1, 0, numY, -1, 1);
+    }
+    
+    void computeSDF() {
+        initializePhiGrid();
+        fastSweep();
+    }
+
+    float interpolatePhi(float px, float py) {
+        int i = static_cast<int>(px / cellSpacing);
+        int j = static_cast<int>(py / cellSpacing);
+
+        int i1 = std::min(i + 1, numX - 1);
+        int j1 = std::min(j + 1, numY - 1);
+
+        float fx = (px - i * cellSpacing) / cellSpacing;
+        float fy = (py - j * cellSpacing) / cellSpacing;
+
+        float phi00 = phiGrid[i * n + j];
+        float phi10 = phiGrid[i1 * n + j];
+        float phi01 = phiGrid[i * n + j1];
+        float phi11 = phiGrid[i1 * n + j1];
+
+        return (1 - fx) * (1 - fy) * phi00 + 
+               fx * (1 - fy) * phi10 + 
+               fy * (1 - fx) * phi01 + 
+               fx * fy * phi11;
+    }
+
+    void computeNormal(float &nx, float& ny, float px, float py) {
+        int i = static_cast<int>(px / cellSpacing);
+        int j = static_cast<int>(py / cellSpacing);
+
+        int left = std::max(i - 1, 0);
+        int right = std::min(i + 1, numX - 1);
+        int top = std::max(j - 1, 0);
+        int bottom = std::min(j + 1, numY - 1);
+
+        float dPhidx = (phiGrid[right * n + j] - phiGrid[left * n + j]) / (2.f * cellSpacing);
+        float dPhidy = (phiGrid[i * n + bottom] - phiGrid[i * n + top]) / (2.f * cellSpacing);
+
+        float length = std::sqrt(dPhidx * dPhidx + dPhidy * dPhidy);
+        if (length > 0.f) {
+            nx = dPhidx / length;
+            ny = dPhidy / length;
+        }
+        else {
+            nx = ny = 0;
+        }
+    }
+
+    void separateParticle(float& px, float& py, float& vx, float& vy) {
+        float phi = interpolatePhi(px, py);
+        if (phi < 0) {
+            float nx, ny;
+            computeNormal(nx, ny, px, py);
+
+            px += -phi * nx;
+            py += -phi * ny;
+
+            float velocityNormal = vx * nx + vy * ny;
+            vx -= velocityNormal * nx;
+            vy -= velocityNormal * ny;
+        }
+    }
+
+    void collideSurfaces(const uint32_t start, const uint32_t end) {
+        for (int i = start; i < end; ++i) {
+            separateParticle(positions[2 * i], positions[2 * i + 1], velocities[2 * i], velocities[2 * i + 1]);
+        }
+    }
+
+    void showSeparationMouse(sf::RenderWindow& window) {
+        float phi = interpolatePhi(mouseX, mouseY);
+        if (phi < 0) {
+            float nx, ny;
+            computeNormal(nx, ny, mouseX, mouseY);
+
+            float pointX = mouseX - phi * nx;
+            float pointY = mouseY - phi * ny;
+
+            sf::VertexArray line(sf::Lines, 2);
+            line[0].position = sf::Vector2f(mouseX, mouseY);
+            line[0].color  = sf::Color(255, 0, 0);
+            line[1].position = sf::Vector2f(pointX, pointY);
+            line[1].color = sf::Color(255, 0, 0);
+            window.draw(line);
+        }
+    }
+
+    void drawPhiValues(sf::RenderWindow& window) {
+        float px = cellSpacing / 3;
+        float py = cellSpacing / 3;
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                text.setString(std::to_string(static_cast<int>(phiGrid[i * n + j])));
+                text.setPosition(px, py);
+                window.draw(text);
+                py += cellSpacing;
+            }
+            py = cellSpacing / 3;
+            px += cellSpacing;
+        }
+    }
+
+    void drawSolids() {
+        int localX = static_cast<int>(mouseX / cellSpacing);
+        int localY = static_cast<int>(mouseY / cellSpacing);
+
+        if (cellType[localX * numY + localY] != SOLID_CELL) {
+            cellType[localX * numY + localY] = SOLID_CELL;
+
+            computeSDF();
+        }
+    }
+
     void cacheTransferNodes(int32_t start, int32_t end, float halfHeight, int32_t component) {
-        const float n = this->numY;
         const float h2 = halfHeight;
 
         const float dx = (component != 0) * h2;
@@ -729,12 +901,12 @@ public:
             // initialize outside cells to solid, every inside cell to air
         for (int i = 0; i < this->numX; ++i) {
             for (int j = 0; j < this->numY; ++j) {
-                    if (this->cellType[i * n + j] == SOLID_CELL) {
-                        this->cellColor[3 * (i * n + j)] = 100;
-                        this->cellColor[3 * (i * n + j) + 1] = 100;
-                        this->cellColor[3 * (i * n + j) + 2] = 100;
-                    }
-                if (this->cellType[i * n + j] != SOLID_CELL) {
+                if (this->cellType[i * n + j] == SOLID_CELL) {
+                    this->cellColor[3 * (i * n + j)] = 100;
+                    this->cellColor[3 * (i * n + j) + 1] = 100;
+                    this->cellColor[3 * (i * n + j) + 2] = 100;
+                }
+                else if (this->cellType[i * n + j] != SOLID_CELL) {
                     this->cellType[i * n + j] = AIR_CELL;
                        
                         this->cellColor[3 * (i * n + j)] = 0;
@@ -756,13 +928,19 @@ public:
             int cellNr = xi * n + yi;
             // if a cell has particle(s) in it, change it to fluid cell
             if (this->cellType[cellNr] == AIR_CELL) {
+
                 this->cellType[cellNr] = FLUID_CELL;
                    
-                    
                     this->cellColor[3 * cellNr] = 0;
                     this->cellColor[3 * cellNr + 1] = 150;
                     this->cellColor[3 * cellNr + 2] = 255;
-                    
+                
+                    /*if (cellNr > 1000) {
+                        this->cellType[cellNr] = SOLID_CELL;
+                        this->cellColor[3 * cellNr] = 100;
+                        this->cellColor[3 * cellNr + 1] = 100;
+                        this->cellColor[3 * cellNr + 2] = 100;
+                    }*/
             }
         }
     }
@@ -937,7 +1115,6 @@ public:
     }
 
     void updateParticleDensity() {
-        int n = this->numY;
         float h = this->cellSpacing;
         float h1 = this->invSpacing;
         float h2 = 0.5 * h;
@@ -1049,9 +1226,6 @@ public:
                 }
 
                 residual[idx] = -scale * (this->u[(i + 1) * n + j] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
-
-                // direction = -b, happens to be equal to residual in this case 
-                direction[idx] = residual[idx];
             }
         }
     }
@@ -1102,7 +1276,6 @@ public:
     void buildPreconditioner() {
         const double tau = 0.97;
         const double sigma = 0.25;
-        const int n = numY;
 
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
@@ -1251,8 +1424,6 @@ public:
                 int idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
-                //u[idx] -= scale * (pressure[(i + 1) * n + j] - pressure[idx]);
-                //v[idx] -= scale * (pressure[idx + 1] - pressure[idx]);
                 u[idx] -= scale * (pressure[idx]);
                 v[idx] -= scale * (pressure[idx]);
                 u[(i + 1) * n + j] += scale * (pressure[idx]);
@@ -1349,12 +1520,12 @@ public:
     void includeRigidObject(const bool mouseDown, const bool justPressed) {
         const float extend = 20 * cellSpacing;
         if (mouseDown) {
-            int n = numY;
             float vx = (objectX - objectPrevX) * 100;
             float vy = (objectY - objectPrevY) * 100;
             for (int i = 1; i < numX - 1; i++) {
                 for (int j = 1; j < numY - 1; j++) {
                     int cellNr = i * n + j;
+                    if (cellType[i * n + j] == SOLID_CELL) continue;
                     //cellType[i * n + j] = AIR_CELL;
                     float dx = (i + 0.5) * cellSpacing - objectX;
                     float dy = (j + 0.5) * cellSpacing - objectY;
@@ -1555,8 +1726,6 @@ public:
 
     void updateVertexArrayTemperature(const uint32_t startIndex, const uint32_t endIndex) {
         for (uint32_t index = startIndex; index < endIndex; ++index) {
-            const float s = 0.01f;
-
             int i = 4 * index;
             const float px = positions[2 * index];
             const float py = positions[2 * index + 1];
@@ -1622,6 +1791,10 @@ public:
             }
         }*/
 
+        if (solidDrawing && leftMouseDown) {
+            this->drawSolids();
+        }
+
         for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
                 this->integrate(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
@@ -1666,6 +1839,16 @@ public:
 
         thread_pool.waitForCompletion();
 
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->collideSurfaces(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+            });
+        }
+
+        this->collideSurfaces(numParticles - numMissedParticles, numParticles);
+
+        thread_pool.waitForCompletion();
+
         //this->makeParticleQueriesConstantMem(0, numParticles);
 
         //this->makeForceObjectQueriesConstantMem(forceObjectActive);
@@ -1707,7 +1890,7 @@ public:
 
     void render(sf::RenderWindow& window) {
         //start = std::chrono::high_resolution_clock::now();
-        //this->drawCells(window);
+        this->drawCells(window);
 
         if (renderPattern == 0) {
             for (int i = 0; i < numThreads; ++i) {
@@ -1768,6 +1951,9 @@ public:
         else if (generatorActive) {
             this->drawGenerator(window);
         }
+
+        this->drawPhiValues(window);
+        this->showSeparationMouse(window);
 
         //this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
@@ -1886,6 +2072,10 @@ public:
 
     void setStep(bool set) {
         this->step = set;
+    }
+
+    void setSolidDrawer(bool set) {
+        this->solidDrawing = set;
     }
 
     void drawUVGrids(sf::RenderWindow& window) {
