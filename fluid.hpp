@@ -648,10 +648,10 @@ public:
         const float positive = std::max(numX, numY) / 2;
         for (int i = 0; i < numX; ++i) {
             for (int j = 0; j < numY; ++j) {
-                if (cellType[i * numY + j] == SOLID_CELL) {
-                    phiGrid[i * numY + j] = -1.f;
-                } else {
+                if (cellType[i * numY + j] != SOLID_CELL) {
                     phiGrid[i * numY + j] = positive;
+                } else {
+                    phiGrid[i * numY + j] = -1.f;
                 }
             }
         }
@@ -660,18 +660,24 @@ public:
     void fastSweepLoop(int startX, int endX, int startY, int endY, int directionX, int directionY) {
         for (int i = startX; i != endX; i += directionX) {
             for (int j = startY; j != endY; j += directionY) {
-                if (phiGrid[i * numY + j] == 0.0f) continue; // Skip boundary cells
+                if (phiGrid[i * numY + j] == 0.0f) continue; 
     
-                float phiX = std::min(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
-                float phiY = std::min(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
-                //float phiX2 = std::max(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
-                //float phiY2 = std::max(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
+                bool isSolid = cellType[i * numY + j] == SOLID_CELL;
+    
+                if (isSolid) {
+                    float phiX2 = std::max(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
+                    float phiY2 = std::max(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
+    
+                    float newPhi = std::min(phiGrid[i * numY + j], -1.0f + std::max(phiX2, phiY2));
+                    phiGrid[i * numY + j] = newPhi;
+                } 
+                else {
+                    float phiX = std::min(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
+                    float phiY = std::min(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
 
-                bool isInterior = phiGrid[i * n + j] < 0;
-
-                float newPhi = isInterior ? -1.0f + std::max(phiX, phiY) : 1.0f + std::min(phiX, phiY);
-                
-                phiGrid[i * numY + j] = isInterior ? std::max(phiGrid[i * numY + j], newPhi) : std::min(phiGrid[i * numY + j], newPhi);
+                    float newPhi = 1.f + std::min(phiX, phiY);
+                    phiGrid[i * numY + j] = std::min(phiGrid[i * numY + j], newPhi);
+                }
             }
         }
     }
