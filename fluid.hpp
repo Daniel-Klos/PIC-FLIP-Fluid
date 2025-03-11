@@ -36,7 +36,7 @@ class Fluid {
     int HEIGHT;
 
     static constexpr float restitution = 0.f;
-    float checkSeperationDist;
+    float checkseparationDist;
     float moveDist;
    
     int FLUID_CELL = 0;
@@ -50,7 +50,7 @@ class Fluid {
     float objectPrevY;
     sf::CircleShape objectDrawer;
     std::map<int, float> rigidObjectQueries;
-    float checkRigidObjectSeperationDist;
+    float checkRigidObjectseparationDist;
     float objectXVel = 0;
     float objectYVel = 0;
 
@@ -58,9 +58,8 @@ class Fluid {
     float mouseY = 0;
 
     float forceObjectRadius = 250; // 200
-    std::map<int, float> forceObjectQueries;
     sf::CircleShape forceObjectDrawer;
-    float checkForceObjectSeperationDist;
+    float checkForceObjectseparationDist;
 
     float generatorRadius = forceObjectRadius;
     sf::RectangleShape generatorDrawer;
@@ -99,7 +98,7 @@ class Fluid {
     float k;
 
     float timeForTransfer;
-    float timeForSeperation;
+    float timeForseparation;
     float timeForIncompressibility;
 
     int numRowsPerThread;
@@ -126,7 +125,8 @@ class Fluid {
     float textureSizeX;
     float textureSizeY;
 
-    float seperationInit;
+    // see if radius / 2.36 works
+    float separationInit;
 
     float vorticityStrength;
 
@@ -197,6 +197,7 @@ class Fluid {
     uint32_t numMissedParticles; 
 
     bool solidDrawing = false;
+    bool solidErasing = false;
 
     std::vector<float> phiGrid;
 
@@ -206,9 +207,11 @@ class Fluid {
 
     sf::Text text;
 
+    bool leftMouseDown = false;
+
 public:
-    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float seperationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), seperationInit(seperationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
+    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
+        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
 
             font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
@@ -294,13 +297,13 @@ public:
             grid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
 
             // initializing particle positions
-            float seperation = radius / seperationInit;  // gridsize: 65: 2.5; 70: 2.3; 90: 2.f; 130: 1.2
+            float separation = radius / separationInit;  // gridsize: 65: 2.5; 70: 2.3; 90: 2.f; 130: 1.2
 
-            int wideNum = std::floor((WIDTH - 2 * cellSpacing - 2) / (radius * seperation));
+            int wideNum = std::floor((WIDTH - 2 * cellSpacing - 2) / (radius * separation));
             int highNum = numParticles / wideNum;
 
-            float starting_px = radius + cellSpacing + 2;//(WIDTH - (radius * seperation * wideNum)) / 2 + radius;
-            float starting_py = (HEIGHT - (radius * seperation * highNum)) / 2 + radius;
+            float starting_px = radius + cellSpacing + 2;//(WIDTH - (radius * separation * wideNum)) / 2 + radius;
+            float starting_py = (HEIGHT - (radius * separation * highNum)) / 2 + radius;
 
             float px = starting_px;
             float py = starting_py;
@@ -315,14 +318,14 @@ public:
                 this->particleColors[3 * i + 1] = 0;
                 this->particleColors[3 * i + 2] = 255;
 
-                px += this->radius * seperation;
+                px += this->radius * separation;
 
                 if ((i + 1) % wideNum == 0) {
                     px = starting_px;
                     if (offset) {
                         px += this->radius;
                     }
-                    py += this->radius * seperation;
+                    py += this->radius * separation;
                     offset = !offset;
                 }
             }
@@ -337,7 +340,7 @@ public:
             }
 
             this->moveDist = 2 * radius;
-            this->checkSeperationDist = moveDist * moveDist;
+            this->checkseparationDist = moveDist * moveDist;
 
             this->objectRadius = 50;//cellSpacing * 3;
             this->objectX = std::floor(WIDTH / 2);
@@ -347,14 +350,14 @@ public:
             this->objectDrawer.setOrigin(objectRadius, objectRadius);
             this->objectDrawer.setRadius(objectRadius);
             this->objectDrawer.setFillColor(sf::Color(255, 0, 0));
-            this->checkRigidObjectSeperationDist = (this->radius + objectRadius) * (this->radius + objectRadius);
+            this->checkRigidObjectseparationDist = (this->radius + objectRadius) * (this->radius + objectRadius);
 
             this->forceObjectDrawer.setOrigin(forceObjectRadius, forceObjectRadius);
             this->forceObjectDrawer.setRadius(forceObjectRadius);
             this->forceObjectDrawer.setOutlineThickness(1.f);
             this->forceObjectDrawer.setFillColor(sf::Color::Transparent);
             this->forceObjectDrawer.setOutlineColor(sf::Color::Red); 
-            this->checkForceObjectSeperationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
+            this->checkForceObjectseparationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
 
             this->generatorDrawer.setOrigin(generatorRadius, generatorRadius);
             this->generatorDrawer.setSize(sf::Vector2f(2 * generatorRadius, 2 * generatorRadius));
@@ -490,7 +493,7 @@ public:
 
         const float dist2 = o2_o1X * o2_o1X + o2_o1Y * o2_o1Y;
 
-        if (dist2 < checkSeperationDist && dist2 > eps) {
+        if (dist2 < checkseparationDist && dist2 > eps) {
             const float dist          = sqrt(dist2);
             const float delta = 0.5f * (moveDist - dist) / dist;
             const float col_vecX = o2_o1X * delta;
@@ -560,7 +563,7 @@ public:
                     float dy = positions[particleIndex * 2 + 1] - mouseY;
                     float d2 = dx * dx + dy * dy;
 
-                    if (d2 > checkForceObjectSeperationDist || d2 == 0.0f) continue;
+                    if (d2 > checkForceObjectseparationDist || d2 == 0.0f) continue;
 
                     float d = std::sqrt(d2);
 
@@ -645,48 +648,40 @@ public:
     }
 
     void initializePhiGrid() {
-        const float positive = std::max(numX, numY) / 2;
+        const float positive = 0;
         for (int i = 0; i < numX; ++i) {
             for (int j = 0; j < numY; ++j) {
-                if (cellType[i * numY + j] != SOLID_CELL) {
-                    phiGrid[i * numY + j] = positive;
-                } else {
+                if (cellType[i * numY + j] == SOLID_CELL) {
                     phiGrid[i * numY + j] = -1.f;
                 }
             }
         }
     }
     
-    void fastSweepLoop(int startX, int endX, int startY, int endY, int directionX, int directionY) {
-        for (int i = startX; i != endX; i += directionX) {
-            for (int j = startY; j != endY; j += directionY) {
-                if (phiGrid[i * numY + j] == 0.0f) continue; 
+    void fastSweepLoop() {
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                if (cellType[i * n + j] != SOLID_CELL) continue; 
     
-                bool isSolid = cellType[i * numY + j] == SOLID_CELL;
+                float phiX2 = std::max(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
+                float phiY2 = std::max(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
     
-                if (isSolid) {
-                    float phiX2 = std::max(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
-                    float phiY2 = std::max(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
-    
-                    float newPhi = std::min(phiGrid[i * numY + j], -1.0f + std::max(phiX2, phiY2));
-                    phiGrid[i * numY + j] = newPhi;
-                } 
-                else {
-                    float phiX = std::min(phiGrid[std::max(i - 1, 0) * numY + j], phiGrid[std::min(i + 1, numX - 1) * numY + j]);
-                    float phiY = std::min(phiGrid[i * numY + std::max(j - 1, 0)], phiGrid[i * numY + std::min(j + 1, numY - 1)]);
-
-                    float newPhi = 1.f + std::min(phiX, phiY);
-                    phiGrid[i * numY + j] = std::min(phiGrid[i * numY + j], newPhi);
-                }
+                float newPhi = std::min(phiGrid[i * numY + j], -1.0f + std::max(phiX2, phiY2));
+                phiGrid[i * numY + j] = newPhi;
             }
         }
     }
     
     void fastSweep() {
-        fastSweepLoop(0, numX, 0, numY, 1, 1);
+        fastSweepLoop();
+        fastSweepLoop();
+        fastSweepLoop();
+        fastSweepLoop();
+
+        /*fastSweepLoop(0, numX, 0, numY, 1, 1);
         fastSweepLoop(numX - 1, -1, numY - 1, -1, -1, -1);
         fastSweepLoop(0, numX, numY - 1, -1, 1, -1);
-        fastSweepLoop(numX - 1, -1, 0, numY, -1, 1);
+        fastSweepLoop(numX - 1, -1, 0, numY, -1, 1);*/
     }
     
     void computeSDF() {
@@ -695,27 +690,35 @@ public:
     }
 
     float interpolatePhi(float px, float py) {
-        int i = static_cast<int>(px / cellSpacing);
-        int j = static_cast<int>(py / cellSpacing);
+        float i = std::floor((px - cellSpacing / 2) * invSpacing);
+        float j = std::floor((py - cellSpacing / 2) * invSpacing);
 
-        int i1 = std::min(i + 1, numX - 1);
-        int j1 = std::min(j + 1, numY - 1);
+        int i0 = std::clamp(static_cast<int>(i), 0, numX - 1);
+        int j0 = std::clamp(static_cast<int>(j), 0, numY - 1);
+        int i1 = std::clamp(i0 + 1, 0, numX - 1);
+        int j1 = std::clamp(j0 + 1, 0, numY - 1);
 
-        float fx = (px - i * cellSpacing) / cellSpacing;
-        float fy = (py - j * cellSpacing) / cellSpacing;
+        float fx = (px - cellSpacing / 2.f - cellSpacing * i) * invSpacing;
+        float fy = (py - cellSpacing / 2.f - cellSpacing * j) * invSpacing;
+        float sx = 1.f - fx;
+        float sy = 1.f - fy;
 
-        float phi00 = phiGrid[i * n + j];
-        float phi10 = phiGrid[i1 * n + j];
-        float phi01 = phiGrid[i * n + j1];
-        float phi11 = phiGrid[i1 * n + j1];
+        i = static_cast<int>(i);
+        j = static_cast<int>(j);
 
-        return (1 - fx) * (1 - fy) * phi00 + 
-               fx * (1 - fy) * phi10 + 
-               fy * (1 - fx) * phi01 + 
+        float phi00 = phiGrid[i0 * n + j0];  // top left
+        float phi10 = phiGrid[i1 * n + j0];  // top right
+        float phi01 = phiGrid[i0 * n + j1];  // bottom left
+        float phi11 = phiGrid[i1 * n + j1];  // bottom right
+
+        return sx * sy * phi00 + 
+               fx * sy * phi10 + 
+               fy * sx * phi01 + 
                fx * fy * phi11;
     }
 
-    void computeNormal(float &nx, float& ny, float px, float py) {
+    void computeNormal(float &nx, float& ny, float px, float py, float phi) {
+        // make it so that it only computes diagonal normals when interpolatePhi() > 1 or something
         int i = static_cast<int>(px / cellSpacing);
         int j = static_cast<int>(py / cellSpacing);
 
@@ -727,8 +730,14 @@ public:
         float dPhidx = (phiGrid[right * n + j] - phiGrid[left * n + j]) / (2.f * cellSpacing);
         float dPhidy = (phiGrid[i * n + bottom] - phiGrid[i * n + top]) / (2.f * cellSpacing);
 
+        /*
+        float dx = px - i * cellSpacing;
+        float dy = py - j * cellSpacing;
+
+        */
+
         float length = std::sqrt(dPhidx * dPhidx + dPhidy * dPhidy);
-        if (length > 0.f) {
+        if (length > 0 && length < WIDTH) {
             nx = dPhidx / length;
             ny = dPhidy / length;
         }
@@ -741,14 +750,15 @@ public:
         float phi = interpolatePhi(px, py);
         if (phi < 0) {
             float nx, ny;
-            computeNormal(nx, ny, px, py);
-
-            px += -phi * nx;
-            py += -phi * ny;
+            computeNormal(nx, ny, px, py, phi);
+            px += -phi * nx * 10;
+            py += -phi * ny * 10;
 
             float velocityNormal = vx * nx + vy * ny;
-            vx -= velocityNormal * nx;
-            vy -= velocityNormal * ny;
+            if (velocityNormal < 0) {
+                vx -= velocityNormal * nx;
+                vy -= velocityNormal * ny;
+            }
         }
     }
 
@@ -760,9 +770,10 @@ public:
 
     void showSeparationMouse(sf::RenderWindow& window) {
         float phi = interpolatePhi(mouseX, mouseY);
+        //std::cout << phi << "\n";
         if (phi < 0) {
             float nx, ny;
-            computeNormal(nx, ny, mouseX, mouseY);
+            computeNormal(nx, ny, mouseX, mouseY, phi);
 
             float pointX = mouseX - phi * nx;
             float pointY = mouseY - phi * ny;
@@ -770,7 +781,7 @@ public:
             sf::VertexArray line(sf::Lines, 2);
             line[0].position = sf::Vector2f(mouseX, mouseY);
             line[0].color  = sf::Color(255, 0, 0);
-            line[1].position = sf::Vector2f(pointX, pointY);
+            line[1].position = sf::Vector2f(mouseX - phi * nx * 100, mouseY - phi * ny * 100);
             line[1].color = sf::Color(255, 0, 0);
             window.draw(line);
         }
@@ -802,6 +813,17 @@ public:
         }
     }
 
+    void eraseSolids() {
+        int localX = static_cast<int>(mouseX / cellSpacing);
+        int localY = static_cast<int>(mouseY / cellSpacing);
+
+        if (cellType[localX * numY + localY] == SOLID_CELL && localX != 0 && localY != 0 && localX != numX - 1 && localY != numY - 1) {
+            cellType[localX * numY + localY] = AIR_CELL;
+
+            computeSDF();
+        }
+    }
+
     void cacheTransferNodes(int32_t start, int32_t end, float halfHeight, int32_t component) {
         const float h2 = halfHeight;
 
@@ -813,7 +835,7 @@ public:
             float y = this->positions[2 * i + 1];
             x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
             y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
-            // x0 is the grid position to the left of the particle, x1 is the position to the right of  the particle. Both can only go up to the second to last cell to the right in the     gridbecause we dont want to be changing wall velocities
+            // x0 is the grid position to the left of the particle, x1 is the position to the right of the particle. Both can only go up to the second to last cell to the right in the grid because we dont want to be changing wall velocities
             int x0 = std::max(1, std::min(static_cast<int>(std::floor((x - dx) * invSpacing)), this->numX - 2)); // - 1
             // basically x - xCell to get the weight of that cell in relation to the particle
             // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied by grid spacing
@@ -850,6 +872,7 @@ public:
             d1[2 * i + component] = tx * sy;
             d2[2 * i + component] = tx * ty;
             d3[2 * i + component] = sx * ty;
+
             // top left
             nr0[2 * i + component] = x0 * n + y0;
             // top right
@@ -933,20 +956,14 @@ public:
 
             int cellNr = xi * n + yi;
             // if a cell has particle(s) in it, change it to fluid cell
+            //std::cout << cellType.size() - 1 << ", " << cellNr << "\n";
             if (this->cellType[cellNr] == AIR_CELL) {
-
                 this->cellType[cellNr] = FLUID_CELL;
-                   
-                    this->cellColor[3 * cellNr] = 0;
-                    this->cellColor[3 * cellNr + 1] = 150;
-                    this->cellColor[3 * cellNr + 2] = 255;
+        
+                this->cellColor[3 * cellNr] = 0;
+                this->cellColor[3 * cellNr + 1] = 150;
+                this->cellColor[3 * cellNr + 2] = 255;
                 
-                    /*if (cellNr > 1000) {
-                        this->cellType[cellNr] = SOLID_CELL;
-                        this->cellColor[3 * cellNr] = 100;
-                        this->cellColor[3 * cellNr + 1] = 100;
-                        this->cellColor[3 * cellNr + 2] = 100;
-                    }*/
             }
         }
     }
@@ -1532,7 +1549,6 @@ public:
                 for (int j = 1; j < numY - 1; j++) {
                     int cellNr = i * n + j;
                     if (cellType[i * n + j] == SOLID_CELL) continue;
-                    //cellType[i * n + j] = AIR_CELL;
                     float dx = (i + 0.5) * cellSpacing - objectX;
                     float dy = (j + 0.5) * cellSpacing - objectY;
 
@@ -1572,13 +1588,77 @@ public:
         window.draw(this->objectDrawer);
     }
 
-    void generate(int32_t numParts) {
-        // use push_back instead
-        this->positions.resize(numParticles + numParts);
-        this->velocities.resize(numParticles + numParts);
-        this->va.resize(4 * (numParticles + numParts));
-        this->particleColors.resize(3 * (numParticles + numParts));
-        for (int index = numParticles; index < numParticles + numParts; ++index) {
+    void generate() {
+        float separation = radius / separationInit;
+        int wideNum = std::floor((2 * generatorRadius) / (radius * separation));
+        int highNum = wideNum;
+        int numAdded = wideNum * highNum;
+
+        int starting_px = std::max(radius, std::min(WIDTH - 2 * generatorRadius - radius, mouseX - generatorRadius + radius));
+        int starting_py = std::max(radius, std::min(HEIGHT - 2 * generatorRadius, mouseY - generatorRadius + radius));
+        int px = starting_px;
+        int py = starting_py;
+        bool offset = true;
+
+        int numSkipped = 0;
+
+        std::vector<float> addToPositions;
+
+        for (int i = 0; i < numAdded; ++i) {;
+            int cellX = px / cellSpacing;
+            int cellY = py / cellSpacing;
+            int cellNr = cellX * n + cellY;
+
+            if (cellType[cellNr] == FLUID_CELL || cellType[cellNr] == SOLID_CELL) {
+                numSkipped++;
+                px += this->radius * separation;
+                if ((i + 1) % wideNum == 0) {
+                    px = starting_px;
+                    if (offset) {
+                        px += this->radius * separation;
+                    }
+                    py += this->radius * separation;
+                    offset = !offset;
+                }
+                continue;
+            }
+
+            addToPositions.push_back(px);
+            addToPositions.push_back(py);
+            px += this->radius * separation;
+            if ((i + 1) % wideNum == 0) {
+                px = starting_px;
+                if (offset) {
+                    px += this->radius * separation;
+                }
+                py += this->radius * separation;
+                offset = !offset;
+            }
+        }
+
+        numParticles += numAdded - numSkipped;
+
+        this->positions.resize(2 * numParticles);
+        this->velocities.resize(2 * numParticles);
+        this->particleColors.resize(3 * numParticles);
+
+        for (int i = addToPositions.size() / 2; i > 0; --i) {
+            int idx = (numParticles - i * 2);
+
+            positions[idx * 2] = addToPositions[i * 2];
+            positions[idx * 2 + 1] = addToPositions[i * 2 + 1];
+
+            velocities[idx * 2] = 0;
+            velocities[idx * 2 + 1] = 0;
+
+            particleColors[idx * 3] = 255;
+            particleColors[idx * 3 + 1] = 255;
+            particleColors[idx * 3 + 2] = 255;
+        }
+
+        this->va.resize(4 * (numParticles));
+
+        for (int index = numParticles - numAdded; index < numParticles; ++index) {
             int i = 4 * index;
             va[i].texCoords = {0.f, 0.f};
             va[i + 1].texCoords = {textureSizeX, 0.f};
@@ -1586,32 +1666,25 @@ public:
             va[i + 3].texCoords = {0.f, textureSizeY};
         }
 
-        int wideNum = std::floor((2 * generatorRadius) / (2 * radius));
-        int highNum = numParts / wideNum;
-        float seperation = radius / 2.36f;
-        int starting_px = mouseX - generatorRadius + radius;
-        int starting_py = mouseY - generatorRadius + radius;
-        int px = starting_px;
-        int py = starting_py;
-        int addTo = numParts - (wideNum * highNum);
-        bool offset = true;
-        for (int i = 0; i < wideNum * highNum + addTo; ++i) {
-            this->positions[(i + numParticles) * 2] = px;
-            this->positions[(i + numParticles) * 2 + 1] = py;
-            this->velocities[(i + numParticles) * 2] = 0.f;
-            this->velocities[(i + numParticles) * 2 + 1] = 0.f;
-            px += this->radius * seperation;
-            if ((i + 1) % wideNum == 0) {
-                px = starting_px;
-                if (offset) {
-                    px += this->radius;
-                }
-                py += this->radius * seperation;
-                offset = !offset;
-            }
-        }
+        particlesPerThread = numParticles / numThreads;
+        numMissedParticles = numParticles - numThreads * particlesPerThread;
 
-        numParticles += numParts;
+        this->collisions.resize(numParticles);
+        this->temperatures.resize(numParticles);
+
+        this->nr0.resize(2 * numParticles);
+        this->nr1.resize(2 * numParticles);
+        this->nr2.resize(2 * numParticles);
+        this->nr3.resize(2 * numParticles);
+
+        this->d0.resize(2 * numParticles);
+        this->d1.resize(2 * numParticles);
+        this->d2.resize(2 * numParticles);
+        this->d3.resize(2 * numParticles);
+    }
+
+    void remove() {
+        
     }
 
     void drawGenerator(sf::RenderWindow& window) {
@@ -1619,22 +1692,9 @@ public:
         window.draw(generatorDrawer);
     }
 
-    void applyForceObjectForces(float strength, float dt) {
-        for (auto [otherParticleID, dist] : forceObjectQueries) {
-            float dx = mouseX - positions[2 * otherParticleID];
-            float dy = mouseY - positions[2 * otherParticleID + 1];
-            float edgeT = dist / forceObjectRadius;
-            float centerT = 1 - edgeT;
-
-            velocities[2 * otherParticleID] += (dx * strength - velocities[2 * otherParticleID]) * centerT * dt;
-            velocities[2 * otherParticleID + 1] += (dy * strength - velocities[2 * otherParticleID + 1]) * centerT * dt;
-        } 
-    }
-
     void drawForceObject(sf::RenderWindow& window) {
         forceObjectDrawer.setPosition(mouseX, mouseY);
         window.draw(forceObjectDrawer); 
-        forceObjectQueries.clear();
     }
 
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
@@ -1651,7 +1711,7 @@ public:
 
             sf::Color color;
 
-            int vel = (int)(velocities[2 * index] * velocities[2 *  index] + velocities[2 * index + 1] * velocities[2 * index    + 1]) / 15000; 
+            int vel = (int)(velocities[2 * index] * velocities[2 * index] + velocities[2 * index + 1] * velocities[2 * index + 1]) / 15000; 
             
             color = sf::Color(velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][0], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][1], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][2], 255);
 
@@ -1777,28 +1837,28 @@ public:
         this->render(window);
     }
 
-    void simulate(float dt_, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
+    void simulate(float dt_, bool leftMouseDown_, bool justPressed, bool rightMouseDown) {
         // order of need of optimization:
             // 1) incompressibility -- implement conjugate gradient
             // 2) to grid -- Don't just do both grids at the same time, but multithread the particles as well. Make a grid similar to collision grid with the proper amount of cells for each u and v grid and use those as neighbor buckets to look up
+            // 3) updateDensity -- Same idea as to grid
 
         // collision, rendering, and to particles all great
-
         dt = dt_;
 
+        leftMouseDown = leftMouseDown_;
         const bool mouseDown = leftMouseDown || rightMouseDown;
-
-        /*if (generatorActive && mouseDown) {
-            if (leftMouseDown) {
-                this->generate(1);
-            }
-            else {
-                this->remove();
-            }
+        if (generatorActive && leftMouseDown) {
+            this->generate();
+        }
+        /*else if (generatorActive && rightMouseDown) {
+            this->remove();
         }*/
-
         if (solidDrawing && leftMouseDown) {
             this->drawSolids();
+        }
+        else if (solidErasing && leftMouseDown) {
+            this->eraseSolids();
         }
 
         for (int i = 0; i < numThreads; ++i) {
@@ -1814,9 +1874,9 @@ public:
         if (fireActive) {
             std::fill(begin(collisions), end(collisions), 0);
         }
-
+        
         addObjectsToGrids();
-
+        
         if (forceObjectActive && mouseDown) {
             if (leftMouseDown) {
                 this->makeForceObjectQueries(-250); // pulling, -250
@@ -1835,15 +1895,6 @@ public:
         std::cout << "collision: " << duration.count() << " milliseconds" << "\n";*/
 
         //auto start = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->constrainWalls(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->constrainWalls(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
 
         for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
@@ -1855,9 +1906,15 @@ public:
 
         thread_pool.waitForCompletion();
 
-        //this->makeParticleQueriesConstantMem(0, numParticles);
+        for (int i = 0; i < numThreads; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->constrainWalls(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
+            });
+        }
 
-        //this->makeForceObjectQueriesConstantMem(forceObjectActive);
+        this->constrainWalls(numParticles - numMissedParticles, numParticles);
+
+        thread_pool.waitForCompletion();
 
         //start = std::chrono::high_resolution_clock::now();
         this->transferMulti(true);
@@ -1891,7 +1948,6 @@ public:
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";*/
-
     }
 
     void render(sf::RenderWindow& window) {
@@ -1958,8 +2014,8 @@ public:
             this->drawGenerator(window);
         }
 
-        this->drawPhiValues(window);
-        this->showSeparationMouse(window);
+        //this->drawPhiValues(window);
+        //this->showSeparationMouse(window);
 
         //this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
@@ -1973,7 +2029,7 @@ public:
             this->forceObjectRadius += add;
             this->forceObjectDrawer.setOrigin(forceObjectRadius, forceObjectRadius);
             this->forceObjectDrawer.setRadius(forceObjectRadius);
-            this->checkForceObjectSeperationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
+            this->checkForceObjectseparationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
         }
     }
 
@@ -2009,8 +2065,8 @@ public:
         return this->vorticityStrength;
     }
 
-    float getTimeForSeperation() {
-        return this->timeForSeperation;
+    float getTimeForseparation() {
+        return this->timeForseparation;
     }
 
     float getTimeForInc() {
@@ -2082,6 +2138,10 @@ public:
 
     void setSolidDrawer(bool set) {
         this->solidDrawing = set;
+    }
+
+    void setSolidEraser(bool set) {
+        this->solidErasing = set;
     }
 
     void drawUVGrids(sf::RenderWindow& window) {
