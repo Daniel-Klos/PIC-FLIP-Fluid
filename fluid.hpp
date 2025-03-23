@@ -209,9 +209,15 @@ class Fluid {
 
     float halfSpacing;
 
+    //sf::CircleShape circleDrawer;
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
+
+            /*circleDrawer.setFillColor(sf::Color(255, 0, 0));
+            circleDrawer.setRadius(5);
+            circleDrawer.setOrigin(5.f / 2.f, 5.f / 2.f);*/
 
             this->halfSpacing = cellSpacing / 2;
 
@@ -420,6 +426,10 @@ public:
             return max;
         }
         return x;
+    }
+
+    float sign(float x) {
+        return (x < 0) * -1.f + (x > 0) * 1.f;
     }
 
     void createRandomPositions() {
@@ -646,13 +656,38 @@ public:
     }
 
     float calculateBoxNormals(float bx, float by, float px, float py, float& nx, float& ny) {
-        float nx = std::abs(px) - bx;
-        float ny = std::abs(py) - by;
-        float dx = std::max(std::abs(px - bx), 0.f);
-        float dy = std::max(std::abs(py - by), 0.f);
-        float dist = sqrt(dx * dx + dy * dy);
-        nx = dx * dist;
-        ny = dy * dist;
+        float localpx = px - bx;
+        float localpy = py - by;
+        float dx = std::abs(localpx) - halfSpacing;
+        float dy = std::abs(localpy) - halfSpacing;
+        float pdx = std::max(dx, 0.f);
+        float pdy = std::max(dy, 0.f);
+        float insideDist = std::min(std::max(dx, dy), 0.f);
+        float dist = sqrt(pdx * pdx + pdy * pdy) + insideDist - radius;
+    
+        if (dist >= 0.f) {
+            return dist;
+        }
+    
+        float dirX = sign(localpx);
+        float dirY = sign(localpy);
+
+        int idx = n * static_cast<int>(px * invSpacing) + static_cast<int>(py * invSpacing);
+    
+        if (pdx > 0 && pdy > 0 && cellType[idx + dirX] != SOLID_CELL && cellType[idx + dirY] != SOLID_CELL) {
+            float len = dist - (insideDist - radius);
+            nx = -dirX * dx / len;
+            ny = -dirY * dy / len;
+        }
+        else if (abs(localpx) > abs(localpy)) {
+            nx = dirX * sign(dist);
+            ny = 0;
+        } 
+        else {
+            nx = 0;
+            ny = dirY * sign(dist);
+        }
+    
         return dist;
     }
 
@@ -663,22 +698,25 @@ public:
         int x0 = std::max(0, localX - 1);
         int x1 = std::min(numX - 1, localX + 1);
         int y0 = std::max(0, localY - 1);
-        int y1 = std::min(numX - 1, localY + 1);
+        int y1 = std::min(numY - 1, localY + 1);
 
-        for (int i = x0; i < x1; ++i) {
-            for (int j = y0; j < y1; ++j) {
+        float prevX = px;
+        float prevY = py;
+
+        for (int i = x0; i <= x1; ++i) {
+            for (int j = y0; j <= y1; ++j) {
                 if (cellType[i * n + j] == SOLID_CELL) {
                     float nx = 0;
                     float ny = 0;
                     float dist = calculateBoxNormals(i * cellSpacing + halfSpacing, j * cellSpacing + halfSpacing, px, py, nx, ny);
                     if (dist < 0.f) {
-                        px += nx;
-                        py += ny;
-                        float velocityNormal = vx * nx + vy * ny;
+                        float velocityNormal = vx * -nx + vy * -ny;
                         if (velocityNormal < 0) {
-                            vx -= velocityNormal * nx / dist;
-                            vy -= velocityNormal * ny / dist;
+                            vx -= velocityNormal * -nx;
+                            vy -= velocityNormal * -ny;
                         }
+                        px += nx * dist;
+                        py += ny * dist;
                     }
                 }
             }
@@ -1926,8 +1964,6 @@ public:
         else if (generatorActive) {
             this->drawGenerator(window);
         }
-
-        this->showSeparationMouse(window);
 
         //this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
