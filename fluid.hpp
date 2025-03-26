@@ -197,7 +197,6 @@ class Fluid {
     uint32_t numMissedParticles; 
 
     bool solidDrawing = false;
-    bool solidErasing = false;
 
     int n;
 
@@ -206,12 +205,17 @@ class Fluid {
     sf::Text text;
 
     bool leftMouseDown = false;
+    bool rightMouseDown = false;
 
     float halfSpacing;
 
     //sf::CircleShape circleDrawer;
 
     std::vector<sf::Vertex> vaCopy;
+
+    sf::RectangleShape pencil;
+
+    int pencilRadius = 1;
 
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
@@ -221,12 +225,17 @@ public:
             circleDrawer.setRadius(5);
             circleDrawer.setOrigin(5.f / 2.f, 5.f / 2.f);*/
 
-            this->halfSpacing = cellSpacing / 2;
-
-            font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
+            /*font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
             text.setPosition(10, 10);
-            text.setFillColor(sf::Color::White);
+            text.setFillColor(sf::Color::White);*/
+
+            this->halfSpacing = cellSpacing / 2;
+
+            pencil.setSize(sf::Vector2f{cellSpacing, cellSpacing});
+            pencil.setOrigin(halfSpacing, halfSpacing);
+            pencil.setOutlineThickness(1);
+            pencil.setOutlineColor(sf::Color::Black);
 
             this->numThreads = thread_pool.m_thread_count;
             this->particlesPerThread = numParticles / numThreads;
@@ -690,7 +699,7 @@ public:
         else if (abs(localpx) > abs(localpy)) {
             nx = dirX * sign(dist);
             ny = 0;
-        } 
+        }
         else {
             nx = 0;
             ny = dirY * sign(dist);
@@ -737,51 +746,12 @@ public:
         }
     }
 
-    void showSeparationMouse(sf::RenderWindow& window) {
-        int localX = mouseX / cellSpacing;
-        int localY = mouseY / cellSpacing;
-
-        int x0 = std::max(0, localX - 1);
-        int x1 = std::min(numX - 1, localX + 1);
-        int y0 = std::max(0, localY - 1);
-        int y1 = std::min(numX - 1, localY + 1);
-
-        float newX = mouseX;
-        float newY = mouseY;
-
-        for (int i = x0; i < x1; ++i) {
-            for (int j = y0; j < y1; ++j) {
-                if (cellType[i * n + j] == SOLID_CELL) {
-                    float nx = 0;
-                    float ny = 0;
-                    float dist = calculateBoxNormals(i * cellSpacing + halfSpacing, j * cellSpacing + halfSpacing, mouseX, mouseY, nx, ny);
-                    if (dist < 0.f) {
-                        newX += nx;
-                        newY += ny;
-                    }
-                }
-            }
-        }
-
-        sf::VertexArray line(sf::Lines, 2);
-        line[0].position = sf::Vector2f(mouseX, mouseY);
-        line[0].color  = sf::Color(255, 0, 0);
-        line[1].position = sf::Vector2f(newX, newY);
-        line[1].color = sf::Color(255, 0, 0);
-        window.draw(line);
-    }
-
-    void drawSolids(bool leftMouseDown, bool rightMouseDown) {
+    void drawSolids() {
         int localX = static_cast<int>(mouseX / cellSpacing);
         int localY = static_cast<int>(mouseY / cellSpacing);
 
-        int x0 = (leftMouseDown && rightMouseDown) * -1 + (leftMouseDown) * 0;
-        int x1 = (leftMouseDown && rightMouseDown) * 1 + (leftMouseDown) * 0;
-        int y0 = (leftMouseDown && rightMouseDown) * -1 + (leftMouseDown) * 0;
-        int y1 = (leftMouseDown && rightMouseDown) * 1 + (leftMouseDown) * 0;
-
-        for (int i = x0; i <= x1; ++i) {
-            for (int j = y0; j <= y1; ++j) {
+        for (int i = -pencilRadius; i <= pencilRadius; ++i) {
+            for (int j = -pencilRadius; j <= pencilRadius; ++j) {
                 int idx = (localX + i) * numY + localY + j;
                 if (cellType[idx] != SOLID_CELL && localX + i % numX > 0 && localY + j > 0 && localX + i % numX < numX - 1 && localY + j < numY - 1) {
                     cellType[idx] = SOLID_CELL;
@@ -790,17 +760,12 @@ public:
         }
     }
 
-    void eraseSolids(bool leftMouseDown, bool rightMouseDown) {
+    void eraseSolids() {
         int localX = static_cast<int>(mouseX / cellSpacing);
         int localY = static_cast<int>(mouseY / cellSpacing);
 
-        int x0 = (leftMouseDown && rightMouseDown) * -1 + (leftMouseDown) * 0;
-        int x1 = (leftMouseDown && rightMouseDown) * 1 + (leftMouseDown) * 0;
-        int y0 = (leftMouseDown && rightMouseDown) * -1 + (leftMouseDown) * 0;
-        int y1 = (leftMouseDown && rightMouseDown) * 1 + (leftMouseDown) * 0;
-
-        for (int i = x0; i <= x1; ++i) {
-            for (int j = y0; j <= y1; ++j) {
+        for (int i = -pencilRadius; i <= pencilRadius; ++i) {
+            for (int j = -pencilRadius; j <= pencilRadius; ++j) {
                 int idx = (localX + i) * numY + localY + j;
                 if (cellType[idx] == SOLID_CELL && localX + i % numX > 0 && localY + j > 0 && localX + i % numX < numX - 1 && localY + j < numY - 1) {
                     cellType[idx] = AIR_CELL;
@@ -1750,6 +1715,31 @@ public:
         window.draw(forceObjectDrawer); 
     }
 
+    void drawPencil(sf::RenderWindow& window) {
+        int localX = static_cast<int>(mouseX / cellSpacing);
+        int localY = static_cast<int>(mouseY / cellSpacing);
+        int idx = localX * n + localY;
+
+        float drawPosX = localX * cellSpacing + halfSpacing;
+        float drawPosY = localY * cellSpacing + halfSpacing;
+
+        if (rightMouseDown) {
+            pencil.setFillColor(sf::Color(150, 0, 0));
+        }
+        else {
+            pencil.setFillColor(sf::Color(0, 150, 0));
+        }
+
+        for (int i = -pencilRadius; i <= pencilRadius; ++i) {
+            for (int j = -pencilRadius; j <= pencilRadius; ++j) {
+                if (localX + i > 0 && localY + j > 0 && localX + i < numX - 1 && localY + j < numY - 1) {
+                    pencil.setPosition(drawPosX + i * cellSpacing, drawPosY + j * cellSpacing);
+                    window.draw(pencil);
+                }
+            }
+        }
+    }
+
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
         int32_t velGradientSize = velGradient.size() - 1;
         for (uint32_t index = startIndex; index < endIndex; ++index) {
@@ -1890,7 +1880,7 @@ public:
         this->render(window);
     }
 
-    void simulate(float dt_, bool leftMouseDown_, bool justPressed, bool rightMouseDown) {
+    void simulate(float dt_, bool leftMouseDown_, bool rightMouseDown_, bool justPressed) {
         // order of need of optimization:
             // 1) incompressibility -- implement conjugate gradient
             // 2) to grid -- Don't just do both grids at the same time, but multithread the particles as well. Make a grid similar to collision grid with the proper amount of cells for each u and v grid and use those as neighbor buckets to look up
@@ -1900,16 +1890,13 @@ public:
         dt = dt_;
 
         leftMouseDown = leftMouseDown_;
-        const bool mouseDown = leftMouseDown || rightMouseDown;
+        rightMouseDown = rightMouseDown_;
 
-        /*else if (generatorActive && rightMouseDown) {
-            this->remove();
-        }*/
         if (solidDrawing && leftMouseDown) {
-            this->drawSolids(leftMouseDown, rightMouseDown);
+            this->drawSolids();
         }
-        else if (solidErasing && leftMouseDown) {
-            this->eraseSolids(leftMouseDown, rightMouseDown);
+        else if (solidDrawing && rightMouseDown) {
+            this->eraseSolids();
         }
 
         for (int i = 0; i < numThreads; ++i) {
@@ -1935,13 +1922,11 @@ public:
             this->remove();
         }
         
-        if (forceObjectActive && mouseDown) {
-            if (leftMouseDown) {
-                this->makeForceObjectQueries(-250); // pulling, -250
-            }
-            else { 
-                this->makeForceObjectQueries(1000); // pushing, 1000
-            }
+        if (forceObjectActive && leftMouseDown) {
+            this->makeForceObjectQueries(-250); // pulling, -250
+        }
+        else if (forceObjectActive && rightMouseDown) { 
+            this->makeForceObjectQueries(1000); // pushing, 1000
         }
 
         //auto start = std::chrono::high_resolution_clock::now();
@@ -2072,6 +2057,10 @@ public:
             this->drawGenerator(window);
         }
 
+        if (solidDrawing) {
+            this->drawPencil(window);
+        }
+
         //this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -2175,6 +2164,14 @@ public:
         return numPressureIters;
     }
 
+    int getNumX() {
+        return this->numX;
+    }
+
+    int getNumY() {
+        return this->numY;
+    }
+
     bool getStop() {
         return this->stop;
     }
@@ -2195,8 +2192,12 @@ public:
         this->solidDrawing = set;
     }
 
-    void setSolidEraser(bool set) {
-        this->solidErasing = set;
+    int getPencilRadius() {
+        return this->pencilRadius;
+    }
+
+    void addToPencilRadius(int add) {
+        this->pencilRadius += add;
     }
 
     void drawUVGrids(sf::RenderWindow& window) {
