@@ -211,6 +211,8 @@ class Fluid {
 
     //sf::CircleShape circleDrawer;
 
+    std::vector<sf::Vertex> vaCopy;
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
@@ -275,6 +277,7 @@ public:
             this->particleColors.resize(3 * numParticles);
             std::fill(begin(particleColors), end(particleColors), 0);
             this->va.resize(numParticles * 4);
+            this->vaCopy.resize(numParticles * 4);
             texture.loadFromFile("white_circle.png");
             texture.generateMipmap();
             auto const texture_size = static_cast<sf::Vector2f>(texture.getSize());
@@ -284,6 +287,11 @@ public:
                 va[i + 1].texCoords = {texture_size.x, 0.f};
                 va[i + 2].texCoords = {texture_size.x, texture_size.y};
                 va[i + 3].texCoords = {0.f, texture_size.y};
+
+                vaCopy[i].texCoords = {0.f, 0.f};
+                vaCopy[i + 1].texCoords = {texture_size.x, 0.f};
+                vaCopy[i + 2].texCoords = {texture_size.x, texture_size.y};
+                vaCopy[i + 3].texCoords = {0.f, texture_size.y};
             }
             states.texture = &texture;
 
@@ -1655,8 +1663,82 @@ public:
     }
 
     void remove() {
+        const int32_t numCovered = std::ceil(generatorRadius / scalingFactor);
+        const uint32_t mouseColumn = std::floor(mouseX / scalingFactor);
+        const uint32_t mouseRow = std::floor(mouseY / scalingFactor);
+    
+        int vaSize = va.getVertexCount();
+        vaCopy.resize(vaSize);
+    
+        for (int i = 0; i < vaSize; ++i) {
+            vaCopy[i] = va[i];
+        }
+    
+        std::vector<bool> toRemove(positions.size() / 2, false);
         
+        for (int32_t i = -numCovered; i < numCovered + 1; ++i) {
+            for (int32_t j = -numCovered; j < numCovered + 1; ++j) {
+                if (mouseRow + j <= 1 || mouseRow + j >= scaledHEIGHT - 1 || mouseColumn + i <= 1 || mouseColumn + i >= scaledWIDTH - 1)
+                    continue;
+    
+                const auto cell = grid.data[mouseRow + j + grid.height * (mouseColumn + i)];
+    
+                for (uint32_t id{0}; id < cell.objects_count; ++id) {
+                    const uint32_t particleIndex = cell.objects[id];
+    
+                    particleColors[3 * particleIndex] = 0;
+                    particleColors[3 * particleIndex + 1] = 255;
+                    particleColors[3 * particleIndex + 2] = 0;
+    
+                    numParticles--;
+                    toRemove[particleIndex] = true;
+                }
+            }
+        }
+    
+        for (int i = positions.size() / 2 - 1; i >= 0; --i) {
+            if (toRemove[i]) {
+                auto positionsStart = positions.begin() + 2 * i;
+                this->positions.erase(positionsStart, positionsStart + 2);
+    
+                auto velocitiesStart = velocities.begin() + 2 * i;
+                this->velocities.erase(velocitiesStart, velocitiesStart + 2);
+    
+                auto colorsStart = particleColors.begin() + 3 * i;
+                this->particleColors.erase(colorsStart, colorsStart + 3);
+    
+                auto vaStart = vaCopy.begin() + 4 * i;
+                this->vaCopy.erase(vaStart, vaStart + 4);
+            }
+        }
+    
+        this->positions.resize(2 * numParticles);
+        this->velocities.resize(2 * numParticles);
+        this->particleColors.resize(3 * numParticles);
+        this->vaCopy.resize(4 * numParticles);
+    
+        va.resize(4 * numParticles);
+        for (int i = 0; i < va.getVertexCount(); ++i) {
+            va[i] = vaCopy[i];
+        }
+    
+        particlesPerThread = numParticles / numThreads;
+        numMissedParticles = numParticles - numThreads * particlesPerThread;
+    
+        this->collisions.resize(numParticles);
+        this->temperatures.resize(numParticles);
+    
+        this->nr0.resize(2 * numParticles);
+        this->nr1.resize(2 * numParticles);
+        this->nr2.resize(2 * numParticles);
+        this->nr3.resize(2 * numParticles);
+    
+        this->d0.resize(2 * numParticles);
+        this->d1.resize(2 * numParticles);
+        this->d2.resize(2 * numParticles);
+        this->d3.resize(2 * numParticles);
     }
+
 
     void drawGenerator(sf::RenderWindow& window) {
         generatorDrawer.setPosition(mouseX, mouseY);
@@ -1819,9 +1901,7 @@ public:
 
         leftMouseDown = leftMouseDown_;
         const bool mouseDown = leftMouseDown || rightMouseDown;
-        if (generatorActive && leftMouseDown) {
-            this->generate();
-        }
+
         /*else if (generatorActive && rightMouseDown) {
             this->remove();
         }*/
@@ -1847,6 +1927,13 @@ public:
         }
         
         addObjectsToGrids();
+
+        if (generatorActive && leftMouseDown) {
+            this->generate();
+        }
+        else if (generatorActive && rightMouseDown) {
+            this->remove();
+        }
         
         if (forceObjectActive && mouseDown) {
             if (leftMouseDown) {
