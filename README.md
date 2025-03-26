@@ -1,13 +1,10 @@
 # PIC-FLIP-Fluid
 A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. 
 
-There are two different types of collision detection available, one which uses constant memory for every grid size, and another which increases the amount of memory used when the grid size is increased. For the most speed, use non-constant memory collision detection, as it is multithreaded, but if changing the grid size (not the amount of particles) during runtime with no change in memory is a must then go for constant memory.
-In the simulate() method, just comment out the method of collision detection that you don't want to use.
-
 Controls:
--   Press 1 for an interactive rigid object and 2 for a force object.
+-   Press 1 for an interactive rigid object, 2 for a force object, and 3 to draw/erase solids (left & right click)
 -   Press s to bias the simulation towards pic, and b to bias the simulation towards flip.
--   Press r to decrease the force object radius, and t to increase
+-   Use the mouse wheel to increase/decrease the radius of objects
 -   Press w to decrease the vorticity confinement, and e to increase it
 -   Press d to decrease the divergence modifier, c to increase it
 -   Press a to switch between diffusion rendering, velocity rendering, vorticity rendering and temperature rendering
@@ -24,3 +21,11 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 
 ![Screenshot 2025-02-23 142916](https://github.com/user-attachments/assets/5981318f-5ac5-4cc7-aacd-515fefe743ca)
 
+Improvements to be made:
+-  Faster pressure solve with preconditioned conjugate gradient
+-  complete multithreading
+-  better collision resolution with scene objects
+
+Note:
+There are two different types of collision detection available, one which uses constant memory for every grid size, and another which increases the amount of memory used when the grid size is increased. For the most speed, use non-constant memory collision detection, as it is multithreaded, but if changing the grid size (not the amount of particles) during runtime with no change in memory is a must then go for constant memory.
+In the simulate() method, just comment out the method of collision detection that you don't want to use.
