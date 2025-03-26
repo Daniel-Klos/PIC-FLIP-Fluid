@@ -21,6 +21,8 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 
 ![Screenshot 2025-02-23 142916](https://github.com/user-attachments/assets/5981318f-5ac5-4cc7-aacd-515fefe743ca)
 
+![Screenshot 2025-03-26 005615](https://github.com/user-attachments/assets/988be616-f1b5-483a-9f0e-76a55853a383)
+
 Improvements to be made:
 -  Faster pressure solve with preconditioned conjugate gradient
 -  complete multithreading
