@@ -1723,11 +1723,11 @@ public:
         float drawPosX = localX * cellSpacing + halfSpacing;
         float drawPosY = localY * cellSpacing + halfSpacing;
 
-        if (rightMouseDown) {
-            pencil.setFillColor(sf::Color(150, 0, 0));
+        if (leftMouseDown || !rightMouseDown) {
+            pencil.setFillColor(sf::Color(0, 150, 0));
         }
         else {
-            pencil.setFillColor(sf::Color(0, 150, 0));
+            pencil.setFillColor(sf::Color(150, 0, 0));
         }
 
         for (int i = -pencilRadius; i <= pencilRadius; ++i) {
@@ -2192,12 +2192,24 @@ public:
         this->solidDrawing = set;
     }
 
+    bool getPencilActive() {
+        return this->solidDrawing;
+    }
+
     int getPencilRadius() {
         return this->pencilRadius;
     }
 
     void addToPencilRadius(int add) {
         this->pencilRadius += add;
+    }
+
+    bool getForceObjectActive() {
+        return this->forceObjectActive;
+    }
+
+    bool getGeneratorActive() {
+        return this->generatorActive;
     }
 
     void drawUVGrids(sf::RenderWindow& window) {
