@@ -144,13 +144,13 @@ int main()
     float diffusionRatio = 0.85f; 
     float flipRatio = 0.9f;
     float seperationInit = 2.7f; // 2.7
-    float vorticityStrength = 400.f;// 350 */
+    float vorticityStrength = 400.f;// 350*/
 
     // grid testing
-    /*int numParticles = 1; 
+    /*int numParticles = 1000; 
     float gravity = 0.f; // 5500
     float divergenceModifier = 1.f; 
-    float gridSize = 10.f; 
+    float gridSize = 20.f; 
     int numPressureIters = 25; 
     float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;
@@ -247,7 +247,7 @@ int main()
     while (window.isOpen())
     {
         sf::Time deltaTime = deltaClock.restart();
-        float setDT = 1.f / 120.f;
+        float setDT = 1.f / 240.f;
         float trueDT = deltaTime.asSeconds();
 
         //totalDT += dt;
@@ -374,6 +374,9 @@ int main()
                 else if (event.key.code == sf::Keyboard::U) {
                     fluid.setStep(true);
                 }
+                /*else if (event.key.code == sf::Keyboard::Z) {
+                    fluid.setRandomVelField();
+                }*/
             }
             else if (event.type == sf::Event::MouseButtonPressed) {
                 if (event.mouseButton.button == sf::Mouse::Left) {
@@ -393,13 +396,25 @@ int main()
                 }
             }
             else if (event.type == sf::Event::MouseWheelMoved) {
-                int mouseWheelDelta = event.mouseWheel.delta;
-                fluid.addToForceObjectRadius(20 * mouseWheelDelta);
-                fluid.addToGeneratorRadius(20 * mouseWheelDelta);
 
-                int pencilRadius = fluid.getPencilRadius();
-                if (!(pencilRadius > fluid.getNumX() / 2 && mouseWheelDelta > 0) && !(pencilRadius == 0 && mouseWheelDelta < 0)) {
-                    fluid.addToPencilRadius(mouseWheelDelta);
+                int mouseWheelDelta = event.mouseWheel.delta;
+
+                if (fluid.getForceObjectActive()) {
+                    fluid.addToForceObjectRadius(20 * mouseWheelDelta);
+                }
+
+                if (fluid.getGeneratorActive()) {
+                    fluid.addToGeneratorRadius(20 * mouseWheelDelta);
+                }
+
+                if (fluid.getPencilActive()) {
+                    int pencilRadius = fluid.getPencilRadius();
+                    if (!(pencilRadius > fluid.getNumX() / 2 && mouseWheelDelta > 0)) {
+                        fluid.addToPencilRadius(mouseWheelDelta);
+                        if (fluid.getPencilRadius() < 0) {
+                            fluid.addToPencilRadius(-fluid.getPencilRadius());
+                        }
+                    }
                 }
             }
         }
@@ -408,16 +423,25 @@ int main()
 
         fluid.update(trueDT, window, leftMouseDown, rightMouseDown, justPressed);
 
-        frame++;
-        if (frame == 20) {
-            fps = (int)(1.f / trueDT);
-            frame = 0;
+        if (!fluid.getStop()) {
+            frame++;
+            if (frame == 20) {
+                fps = (int)(1.f / trueDT);
+                frame = 0;
+            }
+        }
+        else {
+            text.setFillColor(sf::Color::Red);
         }
 
         text.setPosition(WIDTH - 70, 10);
         text.setString(std::to_string(fps)); 
         window.draw(text);
 
+
+        if (fluid.getStop()) {
+            text.setFillColor(sf::Color::White);
+        }
 
         text.setPosition(WIDTH - 175, 10);
         text.setString(oss.str());
