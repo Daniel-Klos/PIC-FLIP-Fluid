@@ -226,7 +226,9 @@ class Fluid {
     static constexpr uint8_t CENTER = 7;
     static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
 
-    bool setRandomVelField = false;
+    bool setRandomField = false;
+    std::vector<float> uTemp;
+    std::vector<float> vTemp;
 
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
@@ -235,6 +237,9 @@ public:
             /*circleDrawer.setFillColor(sf::Color(255, 0, 0));
             circleDrawer.setRadius(5);
             circleDrawer.setOrigin(5.f / 2.f, 5.f / 2.f);*/
+
+            uTemp.resize(numX * numY);
+            vTemp.resize(numX * numY);
 
             font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
@@ -478,7 +483,19 @@ public:
     }
 
     void setRandomVelField() {
-        setRandomVelField = true;
+        setRandomField = true;
+        std::uniform_int_distribution<int> randVel(-100000, 100000);
+
+        std::random_device rd;
+        std::mt19937 mt(rd());
+
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                uTemp[idx] = randVel(mt);
+                vTemp[idx] = randVel(mt);
+            }
+        }
     }
 
     void integrate(const uint32_t startIndex, const uint32_t endIndex) {
@@ -1173,8 +1190,8 @@ public:
         const int32_t n = this->numY;
 
         for (int32_t iter = 0; iter < 1; ++iter) { //numPressureIters
-            for (int32_t i = 1; i < this->numX - 1; ++i) {
-                for (int32_t j = 1; j < this->numY - 1; ++j) {
+            for (int32_t i = 1; i < numX - 1; ++i) { //this->numX - 1
+                for (int32_t j = 1; j < numY - 1; ++j) { //this->numY - 1
                     if (this->cellType[i * n + j] != FLUID_CELL) continue;
                     // <= AIR_CELL just means "is either fluid or air cell" look at the constants
                     float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
@@ -1187,11 +1204,11 @@ public:
                     if (divideBy == 0.f) continue;
 
                     float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
-                    // only uncomment this stuff if theres a bug or sum gng
-                    //if (this->particleRestDensity > 0.f) {
-                    float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
-                    divergence -= this->k * compression * (compression > 0.f);
-                    //}
+
+                    if (this->particleRestDensity > 0.f) {
+                        float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
+                        divergence -= this->k * compression * (compression > 0.f);
+                    }
 
                     float p = divergence / divideBy;
                     p *= overRelaxation;
@@ -1934,7 +1951,7 @@ public:
             for (int j = 0; j < numY; ++j) {
                 int idx = i * numY + j;
                 if (cellType[idx] == FLUID_CELL) {
-                    float div = (u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                    float div = (uTemp[(i + 1) * n + j] - uTemp[idx] + vTemp[idx + 1] - vTemp[idx]);
                     float normalized = std::min(1.0f, std::max(0.0f, div / maxDiv));
 
                     int g = static_cast<int>((1.0f - normalized) * 255);
@@ -2103,7 +2120,7 @@ public:
         // collision, rendering, and to particles all great
         dt = dt_;
 
-        leftMouseDown = leftMouseDown_;
+        /*leftMouseDown = leftMouseDown_;
         rightMouseDown = rightMouseDown_;
 
         if (solidDrawing && leftMouseDown) {
@@ -2153,7 +2170,7 @@ public:
 
         //auto start = std::chrono::high_resolution_clock::now();
 
-        for (int i = 0; i < numThreads; ++i) {
+        /*for (int i = 0; i < numThreads; ++i) {
             thread_pool.addTask([&, i]() {
                 this->collideSurfaces(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
             });
@@ -2179,19 +2196,31 @@ public:
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         std::cout << "to grid: " << duration.count() << " milliseconds" << "\n";*/
-        this->updateParticleDensity();
+        
+        /*this->updateParticleDensity();
         if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
-        this->applyVorticityConfinementRedBlack();
+        this->applyVorticityConfinementRedBlack();*/
         
         //start = std::chrono::high_resolution_clock::now();
-        //float totalDiv = calcDivergence(u, v);
-        //std::cout << "before: " << totalDiv << ", ";
+
+        if (setRandomField) {
+            std::copy(begin(uTemp), end(uTemp), begin(u));
+            std::copy(begin(vTemp), end(vTemp), begin(v));
+        }
+
+        float totalDiv = calcDivergence(u, v);
+        std::cout << "before: " << totalDiv << ", ";
+
         this->solveIncompressibility();
-        //totalDiv = calcDivergence(u, v);
-        //std::cout << "after: " << totalDiv << "\n";
+
+        totalDiv = calcDivergence(u, v);
+        std::cout << "after: " << totalDiv << "\n";
         //this->PCGproject2();
+
+        std::copy(begin(u), end(u), begin(uTemp));
+        std::copy(begin(v), end(v), begin(vTemp));
 
         //this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
@@ -2203,18 +2232,20 @@ public:
         //this->applyVorticityConfinementRedBlack();
 
         //start = std::chrono::high_resolution_clock::now();
-        this->transferMulti(false);
+
+        /*this->transferMulti(false);*/
+
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";*/
-        setRandomVelField = false;
+        setRandomField = false;
     }
 
     void render(sf::RenderWindow& window) {
         //start = std::chrono::high_resolution_clock::now();
         //this->drawCells(window);
-        this->DrawDivergences(window);
+        //this->DrawDivergences(window);
 
         if (renderPattern == 0) {
             for (int i = 0; i < numThreads; ++i) {
@@ -2283,7 +2314,7 @@ public:
         for (int i = 0; i < numX; ++i) {
             for (int j = 0; j < numY; ++j) {
                 int idx = i * n + j;
-                int div = (u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                int div = (uTemp[(i + 1) * n + j] - uTemp[idx] + vTemp[idx + 1] - vTemp[idx]);
 
                 text.setPosition(i * cellSpacing + cellSpacing / 4, j * cellSpacing + cellSpacing / 4);
                 //text.setString(std::to_string(static_cast<int>(residual[i * n + j])));
@@ -2295,7 +2326,7 @@ public:
         //float totalDiv = calcDivergence(u, v);
         //std::cout << totalDiv << "\n";
 
-        //this->drawUVGrids(window);
+        this->drawUVGrids(window);
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
