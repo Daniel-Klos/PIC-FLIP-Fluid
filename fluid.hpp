@@ -217,6 +217,14 @@ class Fluid {
 
     int pencilRadius = 1;
 
+    std::vector<uint8_t> neighbors;
+    static constexpr uint8_t LEFT = 64;
+    static constexpr uint8_t RIGHT = 32;
+    static constexpr uint8_t BOTTOM = 16;
+    static constexpr uint8_t TOP = 8;
+    static constexpr uint8_t CENTER = 7;
+    static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
@@ -229,6 +237,8 @@ public:
             text.setFont(font);
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
+
+            this->neighbors.resize(numX * numY);
 
             this->halfSpacing = cellSpacing / 2;
 
@@ -1165,15 +1175,14 @@ public:
 
                     float divideBy = leftType + rightType + topType + bottomType;
 
-                    // only uncomment this if theres irregular boundary conditions, which there wont be inside this rectangle 
-                    //if (divideBy == 0.f) continue;
+                    if (divideBy == 0.f) continue;
 
                     float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
-                    // only uncomment this stuff if theres a bug or sum gng
-                    //if (this->particleRestDensity > 0.f) {
-                    float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
-                    divergence -= this->k * compression * (compression > 0.f);
-                    //}
+                    
+                    if (this->particleRestDensity > 0.f) {
+                        float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
+                        divergence -= this->k * compression * (compression > 0.f);
+                    }
 
                     float p = divergence / divideBy;
                     p *= overRelaxation;
@@ -1187,18 +1196,246 @@ public:
         }
     }
 
+    uint8_t getMaterialFromDirection(uint8_t direction, int idx) {
+        switch (direction) {
+            case LEFT:
+                return cellType[idx - n];
+            case RIGHT:
+                return cellType[idx + n];
+            case BOTTOM:
+                return cellType[idx + 1];
+            case TOP:
+                return cellType[idx - 1];
+        }
+
+        return SOLID_CELL; // should never get executed
+    }
+
+    uint8_t updateNbrFromNeighbor(uint8_t material, uint8_t nbr_info, uint8_t dir) {
+
+        // if neighbor cell is fluid or air, add to the first 3 bits
+        if (material != SOLID_CELL) {
+            nbr_info++;
+        }
+
+        // if neighbor cell is not fluid, end here
+        if (material != FLUID_CELL) {
+            return nbr_info;
+        }
+
+        // else, add the direction onto the last 4 bits of nbr_info. Using or here because we don't wanna touch the first 3 bits
+        return nbr_info | dir;
+    }
+
+    void setUpNeighbors() {
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
+
+                uint8_t nbr_info = 0u;
+                for (uint8_t dir : directions) {
+                    uint8_t material = getMaterialFromDirection(dir, idx);
+                    nbr_info = updateNbrFromNeighbor(material, nbr_info, dir);
+                }
+
+                neighbors[idx] = nbr_info;
+            }
+        }
+    }
+
     void setUpResidual() {
         double scale = 1.0 / cellSpacing;
-        const int32_t n = numY;
 
         for (int32_t i = 1; i < numX - 1; ++i) {
             for (int32_t j = 1; j < numY - 1; ++j) {
-                const int32_t idx = i * n + j;
+                int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL)  {
+                    residual[idx] = 0.0;
+                    continue;
+                }
+                // multiply by -scale
+                residual[idx] = -1.0 * (this->u[(i + 1) * n + j] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
+            }
+        }
+    }
+
+    void ATimes() {
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+
+                uint8_t nbrs = neighbors[idx];
+                if (!nbrs) { // if a cell has no neighbors continue
+                    Ad[idx] = 0.0;
                     continue;
                 }
 
-                residual[idx] = -scale * (this->u[(i + 1) * n + j] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
+                // all of these & statements are just looking at different bits in nbrs
+                // nbrs & CENTER just extracts the first 3 bits of nbrs; if nbrs is 1001 010, then nbrs & center = 1001 010 & 0000 111 = 0000 010
+                Ad[idx] = 
+                    ((nbrs & CENTER) * direction[idx]) -
+                    ((nbrs & LEFT) ? direction[idx - n] : 0) -
+                    ((nbrs & RIGHT) ? direction[idx + n] : 0) -
+                    ((nbrs & BOTTOM) ? direction[idx + 1] : 0) -
+                    ((nbrs & TOP) ? direction[idx - 1] : 0);
+            }
+        }
+    }
+
+    void ScaledAdd(std::vector<double>& a, std::vector<double>& b, double c) {
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                a[i] += b[i] * c;
+            }
+        }
+    }
+
+    double Dot(std::vector<double>& a, std::vector<double>& b) {
+        double result = 0.0;
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                result += a[i] * b[i];
+            }
+        }
+        return result;
+    }
+
+    void EqualsPlusTimes(std::vector<double>& a, std::vector<double>& b, double c) {
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                a[i] = b[i] + a[i] * c;
+            }
+        }
+    }
+
+    float calcDivergence(std::vector<float> uCopy, std::vector<float> vCopy) {
+        float div = 0.f;
+        for (int32_t i = 1; i < numX - 1; ++i) {
+            for (int32_t j = 1; j < numY - 1; ++j) {
+                int32_t idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL)  {
+                    continue;
+                }
+                div += 1.0 * (uCopy[(i + 1) * n + j] - uCopy[idx] + vCopy[idx + 1] - vCopy[idx]);
+            }
+        }
+        return div;
+    }
+
+    void applyPressureToCopies(std::vector<float>& uCopy, std::vector<float>& vCopy) {
+        float scale = 1.f;//dt / (1000 * cellSpacing);
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
+
+                float p = pressure[idx];
+
+                if (cellType[idx - n] != SOLID_CELL) {
+                    uCopy[idx] -= scale * (p - pressure[idx - n]);
+                }
+                if (cellType[idx - 1] != SOLID_CELL) {
+                    vCopy[idx] -= scale * (p - pressure[idx - 1]);
+                }
+
+                /*u[idx] -= scale * p;
+                v[idx] -= scale * p;
+                u[idx + n] += scale * p;
+                v[idx + 1] += scale * p;*/
+
+                // also try adding a specified pressure for boundaries
+            }
+        }
+    }
+
+    void PCGproject() {
+
+        std::fill(begin(this->p), end(this->p), 0);
+
+        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
+        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
+
+        setUpNeighbors();
+
+        std::fill(begin(pressure), end(pressure), 0.0);
+        std::fill(begin(Ad), end(Ad), 0.0);
+        std::fill(begin(residual), end(residual), 0.0);
+
+        setUpResidual();
+
+        std::copy(begin(residual), end(residual), begin(direction));
+
+        double sigma = Dot(residual, residual);
+        
+        for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) { //numPressureIters
+            ATimes();
+            double alpha = sigma / Dot(direction, Ad);
+            ScaledAdd(pressure, direction, alpha);
+            ScaledAdd(residual, Ad, -alpha);
+            double sigmaOld = sigma;
+            sigma = Dot(residual, residual);
+            double beta = sigma / sigmaOld;
+            EqualsPlusTimes(direction, residual, beta);
+        }
+
+        applyPressure();
+    }
+
+    /*void applyPressure() {
+        float scale = 1.f;//dt / (1000 * cellSpacing);
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                int idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
+
+                float p = pressure[idx];
+
+                if (cellType[idx - n] != SOLID_CELL) {
+                    u[idx] -= scale * (p - pressure[idx - n]);
+                }
+                if (cellType[idx - 1] != SOLID_CELL) {
+                    v[idx] -= scale * (p - pressure[idx - 1]);
+                }
+
+                //u[idx] -= scale * p;
+                //v[idx] -= scale * p;
+                //u[idx + n] += scale * p;
+                //v[idx + 1] += scale * p;
+
+                // also try adding a specified pressure for boundaries
+            }
+        }
+    }*/
+
+    void applyPressure() {
+        float scale = 1.f; // or dt / (1000 * cellSpacing)
+    
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                int leftIdx = (i - 1) * n + j;
+    
+                // Only update u at (i,j) if there's fluid on at least one side
+                if ((cellType[idx] == FLUID_CELL || cellType[leftIdx] == FLUID_CELL) && cellType[idx] != SOLID_CELL && cellType[leftIdx] != SOLID_CELL) {
+                    float pRight = pressure[idx];
+                    float pLeft  = pressure[leftIdx];
+                    u[idx] -= scale * (pRight - pLeft);
+                }
+            }
+        }
+    
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                int downIdx = i * n + (j - 1);
+    
+                if ((cellType[idx] == FLUID_CELL || cellType[downIdx] == FLUID_CELL) &&
+                    cellType[idx] != SOLID_CELL && cellType[downIdx] != SOLID_CELL) {
+                    float pTop = pressure[idx];
+                    float pBottom = pressure[downIdx];
+                    v[idx] -= scale * (pTop - pBottom);
+                }
             }
         }
     }
@@ -1360,62 +1597,6 @@ public:
             }
         }
         return result;
-    }
-
-    void PCGproject() {
-
-        std::fill(pressure.begin(), pressure.end(), 0.0);
-        std::fill(search.begin(), search.end(), 0.0);
-        std::fill(z.begin(), z.end(), 0.0);
-
-        applyPreconditioner(z, residual);
-
-        std::copy(z.begin(), z.end(), search.begin());
-
-        double sigma = dotProduct(z, residual);
-
-        for (int iter = 0; iter < 10; ++iter) {
-            matVec(z, search);
-
-            double alpha = sigma / dotProduct(z, search);
-            scaledAdd(pressure, pressure, search, alpha);
-            scaledAdd(residual, residual, z, -alpha);
-
-            applyPreconditioner(z, residual);
-
-            double sigmaNew = dotProduct(z, residual);
-            scaledAdd(search, z, search, sigmaNew / sigma);
-            sigma = sigmaNew;
-        }
-    }
-
-    void applyPressure() {
-        int32_t n = numY;
-        float scale = dt / cellSpacing;
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL) continue;
-
-                u[idx] -= scale * (pressure[idx]);
-                v[idx] -= scale * (pressure[idx]);
-                u[(i + 1) * n + j] += scale * (pressure[idx]);
-                v[idx + 1] += scale * (pressure[idx]);
-            }
-        }
-    }
-
-    void updatePressurePCG() {
-        setUpResidual();
-        //std::cout << 1;
-        setUpA();
-        //std::cout << 2;
-        buildPreconditioner();
-        //std::cout << 3;
-        PCGproject();
-        //std::cout << 4;
-        applyPressure();
-        //std::cout << 5;
     }
 
     float curl(int i, int j) {
@@ -1740,6 +1921,27 @@ public:
         }
     }
 
+    void DrawDivergences(sf::RenderWindow& window) {
+        float maxDiv = 1.f;
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                int idx = i * numY + j;
+                if (cellType[idx] == FLUID_CELL) {
+                    float div = (u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                    cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
+
+                    if (abs(div) < 0.001) {
+                        cellDrawer.setFillColor(sf::Color(0, 255, 0));
+                    }
+                    else {
+                        cellDrawer.setFillColor(sf::Color(255, 0, 0));
+                    }
+                    window.draw(cellDrawer);
+                }
+            }
+        }
+    }
+
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
         int32_t velGradientSize = velGradient.size() - 1;
         for (uint32_t index = startIndex; index < endIndex; ++index) {
@@ -1972,8 +2174,8 @@ public:
         this->applyVorticityConfinementRedBlack();
         
         //start = std::chrono::high_resolution_clock::now();
-        this->solveIncompressibility();
-        //this->updatePressurePCG();
+        //this->solveIncompressibility();
+        this->PCGproject();
 
         //this->drawUVGrids(window);
         //this->solveIncompressibilityCG();
@@ -1996,6 +2198,7 @@ public:
     void render(sf::RenderWindow& window) {
         //start = std::chrono::high_resolution_clock::now();
         this->drawCells(window);
+        //this->DrawDivergences(window);
 
         if (renderPattern == 0) {
             for (int i = 0; i < numThreads; ++i) {
