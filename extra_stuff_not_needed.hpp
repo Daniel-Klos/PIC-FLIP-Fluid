@@ -1,5 +1,163 @@
 
-    /*void initializeSHConstantMem() {
+    /*
+    // conjugate gradient (not preconditioned) code
+    uint8_t getMaterialFromDirection(uint8_t direction, int idx) {
+        switch (direction) {
+            case LEFT:
+                return cellType[idx - n];
+            case RIGHT:
+                return cellType[idx + n];
+            case BOTTOM:
+                return cellType[idx + 1];
+            case TOP:
+                return cellType[idx - 1];
+        }
+
+        return SOLID_CELL; // should never get executed
+    }
+
+    uint8_t updateNbrFromNeighbor(uint8_t material, uint8_t nbr_info, uint8_t dir) {
+
+        // if neighbor cell is fluid or air, add to the first 3 bits
+        if (material != SOLID_CELL) {
+            nbr_info++;
+        }
+
+        // if neighbor cell is not fluid, end here
+        if (material != FLUID_CELL) {
+            return nbr_info;
+        }
+
+        // else, add the direction onto the last 4 bits of nbr_info. Using or here because we don't wanna touch the first 3 bits
+        return nbr_info | dir;
+    }
+
+    void setUpNeighbors() {
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
+
+                uint8_t nbr_info = 0u;
+                for (uint8_t dir : directions) {
+                    uint8_t material = getMaterialFromDirection(dir, idx);
+                    nbr_info = updateNbrFromNeighbor(material, nbr_info, dir);
+                }
+
+                neighbors[idx] = nbr_info;
+            }
+        }
+    }
+
+    void setUpResidual() {
+        double scale = 1.0 / cellSpacing;
+
+        std::fill(begin(residual), end(residual), 0.0);
+
+        for (int32_t i = 1; i < numX - 1; ++i) {
+            for (int32_t j = 1; j < numY - 1; ++j) {
+                int32_t idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL)  {
+                    residual[idx] = 0.0;
+                    continue;
+                }
+                // multiply by -scale
+                float divergence = -1.0 * (this->u[(i + 1) * n + j] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
+
+                if (this->particleRestDensity > 0.f) {
+                    float compression = this->particleDensity[idx] - this->particleRestDensity;
+                    divergence += this->k * compression * (compression > 0.f);
+                }
+
+                residual[idx] = divergence;
+
+            }
+        }
+    }
+
+    void ATimes() {
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+
+                uint8_t nbrs = neighbors[idx];
+                if (!nbrs) { // if a cell has no neighbors continue
+                    Ad[idx] = 0.0;
+                    continue;
+                }
+
+                // all of these & statements are just looking at different bits in nbrs
+                // nbrs & CENTER just extracts the first 3 bits of nbrs; if nbrs is 1001 010, then nbrs & center = 1001 010 & 0000 111 = 0000 010
+                Ad[idx] = 
+                    ((nbrs & CENTER) * direction[idx]) -
+                    ((nbrs & LEFT) ? direction[idx - n] : 0) -
+                    ((nbrs & RIGHT) ? direction[idx + n] : 0) -
+                    ((nbrs & BOTTOM) ? direction[idx + 1] : 0) -
+                    ((nbrs & TOP) ? direction[idx - 1] : 0);
+            }
+        }
+    }
+
+    void ScaledAdd(std::vector<double>& a, std::vector<double>& b, double c) {
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                a[i] += b[i] * c;
+            }
+        }
+    }
+
+    double Dot(std::vector<double>& a, std::vector<double>& b) {
+        double result = 0.0;
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                result += a[i] * b[i];
+            }
+        }
+        return result;
+    }
+
+    void EqualsPlusTimes(std::vector<double>& a, std::vector<double>& b, double c) {
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                a[i] = b[i] + a[i] * c;
+            }
+        }
+    }
+
+    void CGproject() {
+
+        std::fill(begin(this->p), end(this->p), 0);
+
+        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
+        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
+
+        setUpNeighbors();
+
+        std::fill(begin(pressure), end(pressure), 0.0);
+        std::fill(begin(Ad), end(Ad), 0.0);
+
+        setUpResidual();
+
+        std::copy(begin(residual), end(residual), begin(direction));
+
+        double sigma = Dot(residual, residual);
+        
+        for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
+            ATimes();
+            double alpha = sigma / Dot(direction, Ad);
+            ScaledAdd(pressure, direction, alpha);
+            ScaledAdd(residual, Ad, -alpha);
+            double sigmaOld = sigma;
+            sigma = Dot(residual, residual);
+            double beta = sigma / sigmaOld;
+            EqualsPlusTimes(direction, residual, beta);
+        }
+
+        applyPressure();
+    }
+
+    // constant memory collision detection/resolution code
+    void initializeSHConstantMem() {
 
         std::fill(this->cellCount.begin(), this->cellCount.end(), 0);
         std::fill(this->allHashCells.begin(), this->allHashCells.end(), 0);
@@ -187,7 +345,8 @@
             }
         }
     }
-    
+
+    // just use AABB for arbitrary boundary collision god why did I do this
     void initializePhiGrid() {
         const float positive = 0;
         for (int i = 0; i < numX; ++i) {
