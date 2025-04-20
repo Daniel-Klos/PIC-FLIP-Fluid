@@ -1262,7 +1262,7 @@ public:
 
         std::fill(Adiag.begin(), Adiag.end(), 0.0);
 
-        // Ax[i] is the cell to the right, Ay[i] is the cell below 
+        // Ax[i] is the cell to the right, Ay[i] is the cell below
         std::fill(Ax.begin(), Ax.end(), 0.0);
         std::fill(Ay.begin(), Ay.end(), 0.0);
 
@@ -1305,6 +1305,7 @@ public:
     }
 
     void buildPreconditioner() {
+        // where in all this is a fluid cell treated differently if it has a non-fluid cell to the right or below it? find all examples
         const double tau = 0.97;
         const double sigma = 0.25;
 
@@ -1316,21 +1317,18 @@ public:
 
                 double e = Adiag[idx];
 
-                if (cellType[idx - 1] == FLUID_CELL) {
-                    double px = Ax[idx - 1] * precon[idx - 1];
-                    double py = Ay[idx - 1] * precon[idx - 1];
-                    e -= (px * px + tau * px * py);
-                }
+                double px = Ax[idx - 1] * precon[idx - 1];
+                double py = Ay[idx - 1] * precon[idx - 1];
+                e -= (px * px + tau * px * py);
 
-                if (cellType[idx - n] == FLUID_CELL) {
-                    double px = Ax[idx - n] * precon[idx - n];
-                    double py = Ay[idx - n] * precon[idx - n];
-                    e -= (py * py + tau * px * py);
-                }
+                px = Ax[idx - n] * precon[idx - n];
+                py = Ay[idx - n] * precon[idx - n];
+                e -= (py * py + tau * px * py);
 
                 if (e < sigma * Adiag[idx]) {
                     e = Adiag[idx];
                 }
+
                 // crashes when surrounded by solid cells because e = Adiag[idx] = 0 
                 //e += (e == 0) * 0.000001; // doesn't work, whole sim explodes anyways
 
@@ -1349,12 +1347,8 @@ public:
 
                 double t = a[idx];
 
-                if (i >= 1 && cellType[idx - 1] == FLUID_CELL) {
-                    t -= Ax[idx - 1] * precon[idx - 1] * dst[idx - 1];
-                }
-                if (j >= 1 && cellType[idx - n] == FLUID_CELL) {
-                    t -= Ay[idx - n] * precon[idx - n] * dst[idx - n];
-                }
+                t -= Ax[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                t -= Ay[idx - n] * precon[idx - n] * dst[idx - n];
 
                 dst[idx] = t * precon[idx];
             }
@@ -1367,12 +1361,9 @@ public:
 
                 double t = dst[idx];
 
-                //if (i < numX - 2 && cellType[idx + 1] == FLUID_CELL) {
-                    t -= Ax[idx] * precon[idx] * dst[idx + 1];
-                //}
-                //if (j < numY - 2 && cellType[idx + n] == FLUID_CELL) {
-                    t -= Ay[idx] * precon[idx] * dst[idx + n];
-                //}
+                //here
+                t -= Ax[idx] * precon[idx] * dst[idx + 1];
+                t -= Ay[idx] * precon[idx] * dst[idx + n];
 
                 dst[idx] = t * precon[idx];
             }
@@ -1386,18 +1377,13 @@ public:
                 int32_t idx = i * n + j;
                 
                 double t = Adiag[idx] * b[idx];
-                //if (i >= 1) {
-                    t += Ax[idx - 1] * b[idx - 1];
-                //}
-                //if (j >= 1) {
-                    t += Ay[idx - n] * b[idx - n];
-                //}
-                //if (i < numX - 2) {
-                    t += Ax[idx] * b[idx + 1];
-                //}
-                //if (j < numY - 2) {
-                    t += Ay[idx] * b[idx + n];
-                //}
+
+                t += Ax[idx - 1] * b[idx - 1];
+                t += Ay[idx - n] * b[idx - n];
+
+                //here
+                t += Ax[idx] * b[idx + 1];
+                t += Ay[idx] * b[idx + n];
 
                 dst[idx] = t;
             }
@@ -1764,10 +1750,10 @@ public:
             for (int j = 1; j < numY - 1; ++j) {
                 int idx = i * numY + j;
                 if (cellType[idx] == FLUID_CELL) {
-                    float div = (u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                    float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
 
-                    if (abs(div) > maxDiv) {
-                        maxDiv = abs(div);
+                    if (div > maxDiv) {
+                        maxDiv = div;
                     }
                 }
             }
@@ -1779,7 +1765,7 @@ public:
             for (int j = 1; j < numY - 1; ++j) {
                 int idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
-                float div = (u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
                 cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
 
                 int redScale = 255 * (div / maxDiv);
