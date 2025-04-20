@@ -7,7 +7,7 @@ Controls:
 -   Use the mouse wheel to increase/decrease the radius of objects
 -   Press w to decrease the vorticity confinement, and e to increase it
 -   Press d to decrease the divergence modifier, c to increase it
--   Press a to switch between diffusion rendering, velocity rendering, vorticity rendering and temperature rendering
+-   Press a to switch between diffusion rendering, velocity rendering, vorticity rendering, temperature rendering, and divergence rendering
     - While in temperature rendering mode, press f to turn on fire mode
 -   Press q to exit the simulation
 
