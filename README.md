@@ -24,10 +24,7 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 ![Screenshot 2025-03-26 005615](https://github.com/user-attachments/assets/988be616-f1b5-483a-9f0e-76a55853a383)
 
 Improvements to be made:
--  Faster pressure solve with preconditioned conjugate gradient
+-  Finish preconditioned conjugate gradient code and optimize it
 -  complete multithreading
 -  better collision resolution with scene objects
-
-Note:
-There are two different types of collision detection available, one which uses constant memory for every grid size, and another which increases the amount of memory used when the grid size is increased. For the most speed, use non-constant memory collision detection, as it is multithreaded, but if changing the grid size (not the amount of particles) during runtime with no change in memory is a must then go for constant memory.
-In the simulate() method, just comment out the method of collision detection that you don't want to use.
+-  more accurate volume correction
