@@ -1310,24 +1310,27 @@ public:
         const double tau = 0.97;
         const double sigma = 0.25;
 
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
+        for (int j = 1; j < numY - 1; ++j) {
+            for (int i = 1; i < numX - 1; ++i) {
                 int idx = i * n + j;
 
                 if (cellType[idx] != FLUID_CELL) continue;
 
                 double e = Adiag[idx];
+                
+                // ASSUME ITERATION UP THEN RIGHT
+
+                // if cell preceeding 
+                if (cellType[idx - n] == FLUID_CELL) {
+                    double px = Ax[idx - n] * precon[idx - n];
+                    double py = Ay[idx - n] * precon[idx - n];
+                    e -= (px * px + tau * px * py);
+                }
 
                 if (cellType[idx - 1] == FLUID_CELL) {
                     double px = Ax[idx - 1] * precon[idx - 1];
                     double py = Ay[idx - 1] * precon[idx - 1];
                     e -= (py * py + tau * px * py);
-                }
-
-                if (cellType[idx - n] == FLUID_CELL) {
-                    double px = Ax[idx - n] * precon[idx - n];
-                    double py = Ay[idx - n] * precon[idx - n];
-                    e -= (px * px + tau * px * py);
                 }
 
                 if (e < sigma * Adiag[idx]) {
@@ -1344,37 +1347,37 @@ public:
     void applyPreconditioner(std::vector<double>& dst, std::vector<double>& a) {
         const int32_t n = numY;
 
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
+        for (int j = 1; j < numY - 1; ++j) {
+            for (int i = 1; i < numX - 1; ++i) {
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
                 double t = a[idx];
 
-                if (cellType[idx - 1] == FLUID_CELL) {
-                    t -= Ax[idx - 1] * precon[idx - 1] * dst[idx - 1];
-                }
                 if (cellType[idx - n] == FLUID_CELL) {
-                    t -= Ay[idx - n] * precon[idx - n] * dst[idx - n];
+                    t -= Ax[idx - n] * precon[idx - n] * dst[idx - n];
+                }
+                if (cellType[idx - 1] == FLUID_CELL) {
+                    t -= Ay[idx - 1] * precon[idx - 1] * dst[idx - 1];
                 }
 
                 dst[idx] = t * precon[idx];
             }
         }
 
-        for (int i = numX - 2; i > 0; --i) {
-            for (int j = numY - 2; j > 0; --j) {
+        for (int j = numY - 2; j > 0; --j) {
+            for (int i = numX - 2; i > 0; --i) {
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
                 double t = dst[idx];
 
                 //here
-                if (cellType[idx + 1] == FLUID_CELL) {
-                    t -= Ax[idx] * precon[idx] * dst[idx + 1];
-                }
                 if (cellType[idx + n] == FLUID_CELL) {
-                    t -= Ay[idx] * precon[idx] * dst[idx + n];
+                    t -= Ax[idx] * precon[idx] * dst[idx + n];
+                }
+                if (cellType[idx + 1] == FLUID_CELL) {
+                    t -= Ay[idx] * precon[idx] * dst[idx + 1];
                 }
 
                 dst[idx] = t * precon[idx];
@@ -1390,12 +1393,12 @@ public:
                 
                 double t = Adiag[idx] * b[idx];
 
-                t += Ax[idx - 1] * b[idx - 1];
-                t += Ay[idx - n] * b[idx - n];
+                t += Ax[idx - n] * b[idx - n];
+                t += Ay[idx - 1] * b[idx - 1];
 
                 //here
-                t += Ax[idx] * b[idx + 1];
-                t += Ay[idx] * b[idx + n];
+                t += Ax[idx] * b[idx + n];
+                t += Ay[idx] * b[idx + 1];
 
                 dst[idx] = t;
             }
