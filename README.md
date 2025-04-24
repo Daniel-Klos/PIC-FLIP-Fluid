@@ -1,5 +1,5 @@
 # PIC-FLIP-Fluid
-A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. 
+A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. This implementation uses MICCG(0) for pressure projection.
 
 Controls:
 -   Press 1 for an interactive rigid object, 2 for a force object, 3 for an object that generates/removes particles, and 4 to draw/erase solids (left & right click)
@@ -24,7 +24,7 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 ![Screenshot 2025-03-26 005615](https://github.com/user-attachments/assets/988be616-f1b5-483a-9f0e-76a55853a383)
 
 Improvements to be made:
--  Finish preconditioned conjugate gradient code and optimize it
+-  optimize PCG code
 -  complete multithreading
 -  better collision resolution with scene objects
 -  more accurate volume correction
