@@ -1,5 +1,46 @@
 
     /*
+    void SORproject() {
+        std::fill(begin(this->p), end(this->p), 0.f);
+
+        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
+        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
+
+        std::fill(begin(pressure), end(pressure), 0.f);
+
+        for (int iter = 0; iter < numPressureIters; ++iter) {
+            for (int i = 1; i < this->numX - 1; ++i) {
+                for (int j = 1; j < this->numY - 1; ++j) {
+                    if (this->cellType[i * n + j] != FLUID_CELL) continue;
+
+                    float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
+                    float rightType = cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
+                    float topType = cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
+                    float bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
+
+                    float divideBy = leftType + rightType + topType + bottomType;
+                    if (divideBy == 0.f) continue;
+
+                    float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
+
+                    if (this->particleRestDensity > 0.f) {
+                        float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
+                        if (compression > 0.f) {
+                            divergence -= k * compression;
+                        }
+                    }
+
+                    float p = divergence / divideBy;
+                    p *= overRelaxation;
+
+                    this->u[i * n + j] += leftType * p;
+                    this->u[(i + 1) * n + j] -= rightType * p;
+                    this->v[i * n + j] += topType * p;
+                    this->v[i * n + j + 1] -= bottomType * p;
+                }
+            }
+        }
+    }
     // conjugate gradient (not preconditioned) code
     uint8_t getMaterialFromDirection(uint8_t direction, int idx) {
         switch (direction) {
