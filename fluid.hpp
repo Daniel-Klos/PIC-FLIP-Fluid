@@ -180,8 +180,8 @@ class Fluid {
     std::vector<double> Ad;
 
     std::vector<double> Adiag;
-    std::vector<double> Ax;
-    std::vector<double> Ay;
+    std::vector<double> si;
+    std::vector<double> li;
     std::vector<double> precon;
     std::vector<double> z;
     std::vector<double> search;
@@ -259,8 +259,8 @@ public:
             this->cellOccupants.resize(numX * numY);
 
             this->Adiag.resize(numX * numY);
-            this->Ax.resize(numX * numY);
-            this->Ay.resize(numX * numY);
+            this->si.resize(numX * numY);
+            this->li.resize(numX * numY);
             this->precon.resize(numX * numY);
             this->z.resize(numX * numY);
             this->search.resize(numX * numY);
@@ -1264,8 +1264,8 @@ public:
         std::fill(Adiag.begin(), Adiag.end(), 0.0);
 
         // Ax[i] is the cell to the right, Ay[i] is the cell below
-        std::fill(Ax.begin(), Ax.end(), 0.0);
-        std::fill(Ay.begin(), Ay.end(), 0.0);
+        std::fill(si.begin(), si.end(), 0.0);
+        std::fill(li.begin(), li.end(), 0.0);
 
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
@@ -1284,7 +1284,7 @@ public:
 
                 if (right == FLUID_CELL) {
                     Adiag[idx] += scale;
-                    Ax[idx] = -scale;
+                    li[idx] = -scale;
                 }
                 else if (right == AIR_CELL) {
                     Adiag[idx] += scale;
@@ -1296,7 +1296,7 @@ public:
 
                 if (bottom == FLUID_CELL) {
                     Adiag[idx] += scale;
-                    Ay[idx] = -scale;
+                    si[idx] = -scale;
                 }
                 else if (bottom == AIR_CELL) {
                     Adiag[idx] += scale;
@@ -1306,30 +1306,37 @@ public:
     }
 
     void buildPreconditioner() {
-        // where in all this is a fluid cell treated differently if it has a non-fluid cell to the right or below it? find all examples
         const double tau = 0.97;
         const double sigma = 0.25;
 
-        for (int j = 1; j < numY - 1; ++j) {
-            for (int i = 1; i < numX - 1; ++i) {
+        for (int i = 1; i < numX - 1; ++i) { // I call this the level iteration. Every time j increases, we are at the next level iteration
+            for (int j = 1; j < numY - 1; ++j) { // and this is the swipe iteration. Every time i increases, we are at the next swipe iteration
                 int idx = i * n + j;
 
                 if (cellType[idx] != FLUID_CELL) continue;
 
                 double e = Adiag[idx];
-                
-                // ASSUME ITERATION UP THEN RIGHT
 
-                // if cell preceeding 
-                if (cellType[idx - n] == FLUID_CELL) {
-                    double px = Ax[idx - n] * precon[idx - n];
-                    double py = Ay[idx - n] * precon[idx - n];
+                // si is short for swipe iteration, just some slang for you new gens
+                    // si[index] = 0 if the cell in the following swipe iteration is not fluid, else si[index] = -1
+
+                // li is short for level iteration, try and keep up with the slang
+                    // li[index] = 0 if the cell in the following level iteration is not fluid, else li[index] = -1
+
+                // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration
+                // same for level iteration, denoted with L
+
+                // if cell - S is fluid, then do: (si - S) * (precon - S), and (li - S) * (precon - S)
+                if (cellType[idx - 1] == FLUID_CELL) {
+                    double px = si[idx - 1] * precon[idx - 1];
+                    double py = li[idx - 1] * precon[idx - 1];
                     e -= (px * px + tau * px * py);
                 }
 
-                if (cellType[idx - 1] == FLUID_CELL) {
-                    double px = Ax[idx - 1] * precon[idx - 1];
-                    double py = Ay[idx - 1] * precon[idx - 1];
+                // if cell - L is fluid, then do: (si - L) * (precon - L), and (li - L) * (precon - L)
+                if (cellType[idx - n] == FLUID_CELL) {
+                    double px = si[idx - n] * precon[idx - n];
+                    double py = li[idx - n] * precon[idx - n];
                     e -= (py * py + tau * px * py);
                 }
 
@@ -1345,39 +1352,42 @@ public:
     }
 
     void applyPreconditioner(std::vector<double>& dst, std::vector<double>& a) {
-        const int32_t n = numY;
-
-        for (int j = 1; j < numY - 1; ++j) {
-            for (int i = 1; i < numX - 1; ++i) {
+        for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
                 double t = a[idx];
 
-                if (cellType[idx - n] == FLUID_CELL) {
-                    t -= Ax[idx - n] * precon[idx - n] * dst[idx - n];
-                }
+                // if cell - S is fluid, then do: (si - S) * (precon - S) * (dst - S)
                 if (cellType[idx - 1] == FLUID_CELL) {
-                    t -= Ay[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                    t -= si[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                }
+
+                // if cell - L is fluid, then do: (si - L) * (precon - L) * (dst - L)
+                if (cellType[idx - n] == FLUID_CELL) {
+                    t -= li[idx - n] * precon[idx - n] * dst[idx - n];
                 }
 
                 dst[idx] = t * precon[idx];
             }
         }
 
-        for (int j = numY - 2; j > 0; --j) {
-            for (int i = numX - 2; i > 0; --i) {
+        for (int i = numX - 2; i > 0; --i) {
+            for (int j = numY - 2; j > 0; --j) {
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
                 double t = dst[idx];
 
-                //here
-                if (cellType[idx + n] == FLUID_CELL) {
-                    t -= Ax[idx] * precon[idx] * dst[idx + n];
-                }
+                // if cell + S is fluid, then do: (si) * (precon) * (dst + S)
                 if (cellType[idx + 1] == FLUID_CELL) {
-                    t -= Ay[idx] * precon[idx] * dst[idx + 1];
+                    t -= si[idx] * precon[idx] * dst[idx + 1];
+                }
+
+                // if cell + L is fluid, then do: (li) * (precon) * (dst + L)
+                if (cellType[idx + n] == FLUID_CELL) {
+                    t -= li[idx] * precon[idx] * dst[idx + n];
                 }
 
                 dst[idx] = t * precon[idx];
@@ -1386,19 +1396,23 @@ public:
     }
 
     void matVec(std::vector<double>& dst, std::vector<double>& b) {
-        int32_t n = numY;
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int32_t idx = i * n + j;
                 
                 double t = Adiag[idx] * b[idx];
 
-                t += Ax[idx - n] * b[idx - n];
-                t += Ay[idx - 1] * b[idx - 1];
+                // (si - S) * (b - S)
+                t += si[idx - 1] * b[idx - 1];
 
-                //here
-                t += Ax[idx] * b[idx + n];
-                t += Ay[idx] * b[idx + 1];
+                // (li - L) * (b - L)
+                t += li[idx - n] * b[idx - n];
+
+                // (si) * (b + S)
+                t += si[idx] * b[idx + 1];
+
+                // (li) * (b + L)
+                t += li[idx] * b[idx + n];
 
                 dst[idx] = t;
             }
@@ -1786,28 +1800,12 @@ public:
                 div /= maxDiv;
 
                 int redScale = 255 * (div);
-                int greenScale = 0; //255 * (1.f - div);
+                int greenScale = 255 * (1.f - div);
 
                 cellDrawer.setFillColor(sf::Color(redScale, greenScale, 0));
                 window.draw(cellDrawer);
             }
         }
-
-        /*for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL) continue;
-                float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
-                cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
-
-                bool converged = div < 1;
-                int redScale = 255 * (!converged);
-                int greenScale = 255 * (converged);
-                cellDrawer.setFillColor(sf::Color(redScale, greenScale, 0));
-
-                window.draw(cellDrawer);
-            }
-        }*/
     }
 
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
