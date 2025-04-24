@@ -226,6 +226,8 @@ class Fluid {
     static constexpr uint8_t CENTER = 7;
     static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
 
+    std::vector<double> dotProducts;
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravityX_, float gravityY_, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravityX(gravityX_), gravityY(gravityY_), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
@@ -238,6 +240,8 @@ public:
             text.setFont(font);
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
+
+            this->dotProducts.resize(numThreads + 1);
 
             this->neighbors.resize(numX * numY);
 
@@ -1213,14 +1217,51 @@ public:
         }
     }
 
-    double Dot(std::vector<double>& a, std::vector<double>& b) {
-        double result = 0.0;
+    double DotMulti(std::vector<double> *a, std::vector<double> *b) {
+        /*const int32_t numThreads = thread_pool.m_thread_count;
+        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
+        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;*/
+
+        const int32_t numThreads_ = 2;
+        const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
+        const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
+
+        std::fill(begin(dotProducts), end(dotProducts), 0.0);
+
+        for (int i = 0; i < numThreads_; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->Dot(a, b, i * numColumnsPerThread, i * numColumnsPerThread + numColumnsPerThread, dotProducts[i]);
+            });
+        }
+
+        this->Dot(a, b, numX * numY - numMissedColumns, numX * numY, dotProducts[numThreads_]);
+
+        thread_pool.waitForCompletion();
+
+        double res = 0.0;
+        for (double el : dotProducts) {
+            res += el;
+        }
+
+        return res;
+    }
+
+    void Dot(std::vector<double> *a, std::vector<double> *b, int start, int end, double& res) {
         for (int i = 0; i < numX * numY; ++i) {
             if (cellType[i] == FLUID_CELL) {
-                result += a[i] * b[i];
+                res += (*a)[i] * (*b)[i];
             }
         }
-        return result;
+    }
+
+    double DotProd(std::vector<double> *a, std::vector<double> *b) {
+        double res = 0.0;
+        for (int i = 0; i < numX * numY; ++i) {
+            if (cellType[i] == FLUID_CELL) {
+                res += (*a)[i] * (*b)[i];
+            }
+        }
+        return res;
     }
 
     void EqualsPlusTimes(std::vector<double>& a, std::vector<double>& b, double c) {
@@ -1232,8 +1273,8 @@ public:
     }
 
     void applyPressure() {
-        const float density = 1000.f;
-        const float scale = dt / (density * cellSpacing);
+        //const float density = 1000.f;
+        //const float scale = dt / (density * cellSpacing);
     
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
@@ -1318,10 +1359,10 @@ public:
                 double e = Adiag[idx];
 
                 // si is short for swipe iteration, just some slang for you new gens
-                    // si[index] = 0 if the cell in the following swipe iteration is not fluid, else si[index] = -1
+                    // si[index] = 0 if the cell in the next swipe iteration touching the current is not fluid, else si[index] = -1
 
                 // li is short for level iteration, try and keep up with the slang
-                    // li[index] = 0 if the cell in the following level iteration is not fluid, else li[index] = -1
+                    // li[index] = 0 if the cell in the next level iteration touching the current cell is not fluid, else li[index] = -1
 
                 // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration
                 // same for level iteration, denoted with L
@@ -1344,32 +1385,33 @@ public:
                     e = Adiag[idx];
                 }
 
-                if (fabs(e) > 10e-9) {
+                // don't encase a small amount of fluid cells within solids, it messes with the preconditioner. But only modifying it only if e is big enough patches up the problem
+                if (e * e > 1e-18) {
                     precon[idx] = 1.0 / std::sqrt(e);
                 }
             }
         }
     }
 
-    void applyPreconditioner(std::vector<double>& dst, std::vector<double>& a) {
+    void applyPreconditioner(std::vector<double> *dst, std::vector<double> *a) {
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
-                double t = a[idx];
+                double t = (*a)[idx];
 
                 // if cell - S is fluid, then do: (si - S) * (precon - S) * (dst - S)
                 if (cellType[idx - 1] == FLUID_CELL) {
-                    t -= si[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                    t -= si[idx - 1] * precon[idx - 1] * (*dst)[idx - 1];
                 }
 
                 // if cell - L is fluid, then do: (si - L) * (precon - L) * (dst - L)
                 if (cellType[idx - n] == FLUID_CELL) {
-                    t -= li[idx - n] * precon[idx - n] * dst[idx - n];
+                    t -= li[idx - n] * precon[idx - n] * (*dst)[idx - n];
                 }
 
-                dst[idx] = t * precon[idx];
+                (*dst)[idx] = t * precon[idx];
             }
         }
 
@@ -1378,48 +1420,49 @@ public:
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL) continue;
 
-                double t = dst[idx];
+                double t = (*dst)[idx];
 
                 // if cell + S is fluid, then do: (si) * (precon) * (dst + S)
                 if (cellType[idx + 1] == FLUID_CELL) {
-                    t -= si[idx] * precon[idx] * dst[idx + 1];
+                    t -= si[idx] * precon[idx] * (*dst)[idx + 1];
                 }
 
                 // if cell + L is fluid, then do: (li) * (precon) * (dst + L)
                 if (cellType[idx + n] == FLUID_CELL) {
-                    t -= li[idx] * precon[idx] * dst[idx + n];
+                    t -= li[idx] * precon[idx] * (*dst)[idx + n];
                 }
 
-                dst[idx] = t * precon[idx];
+                (*dst)[idx] = t * precon[idx];
             }
         }
     }
 
-    void matVec(std::vector<double>& dst, std::vector<double>& b) {
+    void matVec(std::vector<double> *dst, std::vector<double> *b) {
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int32_t idx = i * n + j;
                 
-                double t = Adiag[idx] * b[idx];
+                double t = Adiag[idx] * (*b)[idx];
 
                 // (si - S) * (b - S)
-                t += si[idx - 1] * b[idx - 1];
+                t += si[idx - 1] * (*b)[idx - 1];
 
                 // (li - L) * (b - L)
-                t += li[idx - n] * b[idx - n];
+                t += li[idx - n] * (*b)[idx - n];
 
                 // (si) * (b + S)
-                t += si[idx] * b[idx + 1];
+                t += si[idx] * (*b)[idx + 1];
 
                 // (li) * (b + L)
-                t += li[idx] * b[idx + n];
+                t += li[idx] * (*b)[idx + n];
 
-                dst[idx] = t;
+                (*dst)[idx] = t;
             }
         }
     }
 
     void PCGproject() {
+
         std::fill(begin(this->p), end(this->p), 0.f);
 
         std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
@@ -1430,20 +1473,20 @@ public:
         setUpResidual();
         setUpA();
         buildPreconditioner();
-        applyPreconditioner(z, residual);
+        applyPreconditioner(&z, &residual);
         std::copy(begin(z), end(z), begin(search));
 
-        double sigma = Dot(z, residual);
+        double sigma = DotMulti(&z, &residual);
 
         for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
-            matVec(z, search);
-            double alpha = sigma / Dot(z, search);
+            matVec(&z, &search);
+            double alpha = sigma / DotMulti(&z, &search);
             ScaledAdd(pressure, search, alpha);
             ScaledAdd(residual, z, -alpha);
 
-            applyPreconditioner(z, residual);
+            applyPreconditioner(&z, &residual);
 
-            double sigmaNew = Dot(z, residual);
+            double sigmaNew = DotMulti(&z, &residual);
             EqualsPlusTimes(search, z, sigmaNew / sigma);
             sigma = sigmaNew;
         }
@@ -1984,7 +2027,6 @@ public:
     }
 
     void update(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
-
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
@@ -2006,6 +2048,7 @@ public:
         // collision, rendering, and to particles all great
         dt = dt_;
 
+        auto start = std::chrono::high_resolution_clock::now();
         leftMouseDown = leftMouseDown_;
         rightMouseDown = rightMouseDown_;
 
@@ -2038,49 +2081,94 @@ public:
             this->makeForceObjectQueries(1000); // pushing, 1000
         }
 
-        //auto start = std::chrono::high_resolution_clock::now();
-        solveCollisions();
-        
-        /*auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        std::cout << "collision: " << duration.count() << " milliseconds" << "\n";*/
+        //std::cout << "miscellaneous: " << duration.count() << " milliseconds" << "\n";
 
-        //auto start = std::chrono::high_resolution_clock::now();
+
+
+
+        start = std::chrono::high_resolution_clock::now();
+        solveCollisions();
+        
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        //std::cout << "collision: " << duration.count() << " milliseconds" << "\n";
+
+
+
+
+
+
+        start = std::chrono::high_resolution_clock::now();
 
         this->collideSurfacesMulti();
 
         this->constrainWallsMulti();
 
-        //start = std::chrono::high_resolution_clock::now();
-        this->transfer(true);
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        std::cout << "to grid: " << duration.count() << " milliseconds" << "\n";*/
+        //std::cout << "obstacle collision: " << duration.count() << " milliseconds" << "\n";
+
+
+
+
+
+
+        start = std::chrono::high_resolution_clock::now();
+        this->transfer(true);
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        //std::cout << "to grid: " << duration.count() << " milliseconds" << "\n";
+
+
+
+
+        start = std::chrono::high_resolution_clock::now();
         this->updateParticleDensity();
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        //std::cout << "density update: " << duration.count() << " milliseconds" << "\n";
+
+
+
+
         if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
-        this->applyVorticityConfinementRedBlack();
-        
-        //start = std::chrono::high_resolution_clock::now();
+
+
+        if (vorticityStrength > 0) {
+            this->applyVorticityConfinementRedBlack();
+        }
+
+
+        start = std::chrono::high_resolution_clock::now();
         this->PCGproject();
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        std::cout << "incompressibility: " << duration.count() << " milliseconds" << "\n";*/
+        //std::cout << "projection: " << duration.count() << " milliseconds" << "\n";
 
-        //start = std::chrono::high_resolution_clock::now();
+
+
+
+
+        start = std::chrono::high_resolution_clock::now();
         this->transfer(false);
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";*/
+        //std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";
     }
 
     void render(sf::RenderWindow& window) {
-        //start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
         this->drawCells(window);
 
         if (renderPattern == 0) {
@@ -2122,10 +2210,10 @@ public:
         }
 
         //this->drawUVGrids(window);
-        /*end = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        std::cout << "rendering: " << duration.count() << " milliseconds" << "\n";*/
+        //std::cout << "rendering: " << duration.count() << " milliseconds" << "\n";
     }
 
     void addToForceObjectRadius(float add) {
