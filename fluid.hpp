@@ -66,7 +66,8 @@ class Fluid {
 
     std::vector<int> particleColors;
 
-    float gravity;
+    float gravityX;
+    float gravityY;
 
     std::array<std::array<int, 3>, 100> velGradient;
     std::array<std::array<int, 3>, 4> velColorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
@@ -226,8 +227,8 @@ class Fluid {
     static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
 
 public:
-    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravity, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravity(gravity), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
+    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravityX_, float gravityY_, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
+        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravityX(gravityX_), gravityY(gravityY_), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
 
             /*circleDrawer.setFillColor(sf::Color(255, 0, 0));
             circleDrawer.setRadius(5);
@@ -472,7 +473,8 @@ public:
         for (int i = startIndex; i < endIndex; ++i) {
             this->positions[2 * i] += this->velocities[2 * i] * dt;
             this->positions[2 * i + 1] += this->velocities[2 * i + 1] * dt;
-            this->velocities[2 * i + 1] += gravity * dt;
+            this->velocities[2 * i + 1] += gravityX * dt;
+            this->velocities[2 * i] += gravityY * dt;
 
             if (this->fireActive && this->renderPattern == 3 && positions[2 * i + 1] < HEIGHT - cellSpacing - 10) {
                 this->velocities[2 * i + 1] -= fireStrength * temperatures[i] * dt;
@@ -1187,7 +1189,6 @@ public:
             for (int32_t j = 1; j < numY - 1; ++j) {
                 int32_t idx = i * n + j;
                 if (cellType[idx] != FLUID_CELL)  {
-                    residual[idx] = 0.0;
                     continue;
                 }
 
@@ -1195,7 +1196,7 @@ public:
 
                 if (this->particleRestDensity > 0.f) {
                     float compression = this->particleDensity[idx] - this->particleRestDensity;
-                    divergence += this->k * compression * (compression > 0.f);
+                    divergence += (compression > 0.f) * this->k * compression;
                 }
 
                 residual[idx] = divergence;
@@ -1317,22 +1318,25 @@ public:
 
                 double e = Adiag[idx];
 
-                double px = Ax[idx - 1] * precon[idx - 1];
-                double py = Ay[idx - 1] * precon[idx - 1];
-                e -= (px * px + tau * px * py);
+                if (cellType[idx - 1] == FLUID_CELL) {
+                    double px = Ax[idx - 1] * precon[idx - 1];
+                    double py = Ay[idx - 1] * precon[idx - 1];
+                    e -= (py * py + tau * px * py);
+                }
 
-                px = Ax[idx - n] * precon[idx - n];
-                py = Ay[idx - n] * precon[idx - n];
-                e -= (py * py + tau * px * py);
+                if (cellType[idx - n] == FLUID_CELL) {
+                    double px = Ax[idx - n] * precon[idx - n];
+                    double py = Ay[idx - n] * precon[idx - n];
+                    e -= (px * px + tau * px * py);
+                }
 
                 if (e < sigma * Adiag[idx]) {
                     e = Adiag[idx];
                 }
 
-                // crashes when surrounded by solid cells because e = Adiag[idx] = 0 
-                //e += (e == 0) * 0.000001; // doesn't work, whole sim explodes anyways
-
-                precon[idx] = 1.0 / std::sqrt(e);
+                if (fabs(e) > 10e-9) {
+                    precon[idx] = 1.0 / std::sqrt(e);
+                }
             }
         }
     }
@@ -1347,8 +1351,12 @@ public:
 
                 double t = a[idx];
 
-                t -= Ax[idx - 1] * precon[idx - 1] * dst[idx - 1];
-                t -= Ay[idx - n] * precon[idx - n] * dst[idx - n];
+                if (cellType[idx - 1] == FLUID_CELL) {
+                    t -= Ax[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                }
+                if (cellType[idx - n] == FLUID_CELL) {
+                    t -= Ay[idx - n] * precon[idx - n] * dst[idx - n];
+                }
 
                 dst[idx] = t * precon[idx];
             }
@@ -1362,8 +1370,12 @@ public:
                 double t = dst[idx];
 
                 //here
-                t -= Ax[idx] * precon[idx] * dst[idx + 1];
-                t -= Ay[idx] * precon[idx] * dst[idx + n];
+                if (cellType[idx + 1] == FLUID_CELL) {
+                    t -= Ax[idx] * precon[idx] * dst[idx + 1];
+                }
+                if (cellType[idx + n] == FLUID_CELL) {
+                    t -= Ay[idx] * precon[idx] * dst[idx + n];
+                }
 
                 dst[idx] = t * precon[idx];
             }
@@ -1768,13 +1780,31 @@ public:
                 float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
                 cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
 
-                int redScale = 255 * (div / maxDiv);
-                int greenScale = 255 * (maxDiv / std::max(div, 1e-5f));
+                div /= maxDiv;
+
+                int redScale = 255 * (div);
+                int greenScale = 0; //255 * (1.f - div);
+
+                cellDrawer.setFillColor(sf::Color(redScale, greenScale, 0));
+                window.draw(cellDrawer);
+            }
+        }
+
+        /*for (int i = 1; i < numX - 1; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                if (cellType[idx] != FLUID_CELL) continue;
+                float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
+
+                bool converged = div < 1;
+                int redScale = 255 * (!converged);
+                int greenScale = 255 * (converged);
                 cellDrawer.setFillColor(sf::Color(redScale, greenScale, 0));
 
                 window.draw(cellDrawer);
             }
-        }
+        }*/
     }
 
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
@@ -2114,12 +2144,20 @@ public:
         }
     }
 
-    void addToGravity(float add) {
-        this->gravity += add;
+    void addToGravityX(float add) {
+        this->gravityX += add;
     }
 
-    float getGravity() {
-        return this->gravity;
+    float getGravityX() {
+        return this->gravityX;
+    }
+
+    void addToGravityY(float add) {
+        this->gravityY += add;
+    }
+
+    float getGravityY() {
+        return this->gravityY;
     }
 
     void addToDivergenceModifier(float add) {
