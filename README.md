@@ -28,3 +28,4 @@ Improvements to be made:
 -  complete multithreading
 -  better collision resolution with scene objects
 -  more accurate volume correction
+-  Better boundary conditions
