@@ -218,14 +218,6 @@ class Fluid {
 
     int pencilRadius = 1;
 
-    std::vector<uint8_t> neighbors;
-    static constexpr uint8_t LEFT = 64;
-    static constexpr uint8_t RIGHT = 32;
-    static constexpr uint8_t BOTTOM = 16;
-    static constexpr uint8_t TOP = 8;
-    static constexpr uint8_t CENTER = 7;
-    static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
-
     std::vector<double> dotProducts;
 
 public:
@@ -241,9 +233,7 @@ public:
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
 
-            this->dotProducts.resize(numThreads + 1);
-
-            this->neighbors.resize(numX * numY);
+            this->dotProducts.resize(numThreads);
 
             this->halfSpacing = cellSpacing / 2;
 
@@ -1222,21 +1212,19 @@ public:
         const int32_t numColumnsPerThread = (numX - 2) / numThreads;
         const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;*/
 
-        const int32_t numThreads_ = 2;
+        const int32_t numThreads_ = 1;
         const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
 
         std::fill(begin(dotProducts), end(dotProducts), 0.0);
 
         for (int i = 0; i < numThreads_; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->Dot(a, b, i * numColumnsPerThread, i * numColumnsPerThread + numColumnsPerThread, dotProducts[i]);
+            int start = i * numColumnsPerThread;
+            int end = (i == numThreads_ - 1) ? (numX * numY) : (start + numColumnsPerThread);
+            thread_pool.addTask([&, i, start, end]() {
+                this->Dot(a, b, start, end, dotProducts[i]);
             });
         }
-
-        this->Dot(a, b, numX * numY - numMissedColumns, numX * numY, dotProducts[numThreads_]);
-
-        thread_pool.waitForCompletion();
 
         double res = 0.0;
         for (double el : dotProducts) {
@@ -1247,40 +1235,66 @@ public:
     }
 
     void Dot(std::vector<double> *a, std::vector<double> *b, int start, int end, double& res) {
-        for (int i = 0; i < numX * numY; ++i) {
+        for (int i = start; i < end; ++i) {
             if (cellType[i] == FLUID_CELL) {
                 res += (*a)[i] * (*b)[i];
             }
         }
     }
 
-    double DotProd(std::vector<double> *a, std::vector<double> *b) {
-        double res = 0.0;
-        for (int i = 0; i < numX * numY; ++i) {
-            if (cellType[i] == FLUID_CELL) {
-                res += (*a)[i] * (*b)[i];
-            }
+    void EqualsPlusTimesMulti(std::vector<double> *a, std::vector<double> *b, double c) {
+        /*const int32_t numThreads = thread_pool.m_thread_count;
+        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
+        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;*/
+
+        const int32_t numThreads_ = 2;
+        const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
+        const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
+
+        for (int i = 0; i < numThreads_; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->EqualsPlusTimes(a, b, c, i * numColumnsPerThread, i * numColumnsPerThread + numColumnsPerThread);
+            });
         }
-        return res;
+
+        this->EqualsPlusTimes(a, b, c, numX * numY - numMissedColumns, numX * numY);
+
+        thread_pool.waitForCompletion();
     }
 
-    void EqualsPlusTimes(std::vector<double>& a, std::vector<double>& b, double c) {
-        for (int i = 0; i < numX * numY; ++i) {
+    void EqualsPlusTimes(std::vector<double> *a, std::vector<double> *b, double c, int start, int end) {
+        for (int i = start; i < end; ++i) {
             if (cellType[i] == FLUID_CELL) {
-                a[i] = b[i] + a[i] * c;
+                (*a)[i] = (*b)[i] + (*a)[i] * c;
             }
         }
     }
 
-    void applyPressure() {
+    void applyPressureMulti() {
+        const int32_t numThreads_ = 2;
+        const int32_t numColumnsPerThread = (numX - 2) / numThreads_;
+        const int32_t numMissedColumns = (numX - 2) - numColumnsPerThread * numThreads_;
+
+        for (int i = 0; i < numThreads_; ++i) {
+            thread_pool.addTask([&, i]() {
+                this->applyPressure(1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
+            });
+        }
+
+        this->applyPressure(numX - 1 - numMissedColumns, numX - 1);
+
+        thread_pool.waitForCompletion();
+    }
+
+    void applyPressure(int start, int end) {
         //const float density = 1000.f;
         //const float scale = dt / (density * cellSpacing);
     
-        for (int i = 1; i < numX - 1; ++i) {
+        for (int i = start; i < end; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int idx = i * n + j;
-                int leftIdx = (i - 1) * n + j;
-                int upIdx = i * n + (j - 1);
+                int leftIdx =  idx - n;
+                int upIdx = idx - 1;
 
                 if ((cellType[idx] == FLUID_CELL || cellType[leftIdx] == FLUID_CELL) &&
                     cellType[idx] != SOLID_CELL && cellType[leftIdx] != SOLID_CELL) {
@@ -1476,22 +1490,36 @@ public:
         applyPreconditioner(&z, &residual);
         std::copy(begin(z), end(z), begin(search));
 
+        // DotMulti needs to be debugged, EqualsPlusTimesMulti good
+
+        //double sigma = 0.0;
+        //Dot(&z, &residual, 0, numX * numY, sigma);
+
         double sigma = DotMulti(&z, &residual);
 
         for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
             matVec(&z, &search);
+            //double denom = 0.0;
+            //Dot(&z, &search, 0, numX * numY, denom);
+            //double alpha = sigma / denom;
+
             double alpha = sigma / DotMulti(&z, &search);
             ScaledAdd(pressure, search, alpha);
             ScaledAdd(residual, z, -alpha);
 
             applyPreconditioner(&z, &residual);
 
+            //double sigmaNew = Dot(&z, &residual, 0, numX * numY);
+            //double sigmaNew = 0.0;
+            //Dot(&z, &residual, 0, numX * numY, sigmaNew);
+
             double sigmaNew = DotMulti(&z, &residual);
-            EqualsPlusTimes(search, z, sigmaNew / sigma);
+            
+            EqualsPlusTimesMulti(&search, &z, sigmaNew / sigma);
             sigma = sigmaNew;
         }
 
-        applyPressure();
+        applyPressureMulti();
     }
 
     float curl(int i, int j) {
