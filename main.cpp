@@ -72,7 +72,8 @@ int main()
 
     // grid test
     /*int32_t numParticles = 30000; 
-    float gravity = 5500.f; 
+    float gravityX = 5500.f; 
+    float gravityY = 0.f;
     float divergenceModifier = 30.f; // 8.5 for 15000 
     float gridSize = 100.f; // 100
     int32_t numPressureIters = 30; // 30 
@@ -83,7 +84,8 @@ int main()
 
     // a lot
     /*int numParticles = 26400; 
-    float gravity = 4500.f; 
+    float gravityX = 4500.f; 
+    float gravityY = 0.f;
     float divergenceModifier = 10.f;
     float gridSize = 85.f; 
     int numPressureIters = 30;
@@ -136,37 +138,40 @@ int main()
     float vorticityStrength = 2.f;*/
 
     // casual
-    /*int32_t numParticles = 15000; 
-    float gravity = 5500.f; // 5500
-    float divergenceModifier = 8.5f; 
+    int32_t numParticles = 15000; 
+    float gravityX = 5500.f; // 5500
+    float gravityY = 0.f;
+    float divergenceModifier = 25.f; //4, 10
     float gridSize = 70.f; 
-    int32_t numPressureIters = 30; // 30 
+    int32_t numPressureIters = 2; // 7, 20
     float diffusionRatio = 0.85f; 
     float flipRatio = 0.9f;
     float seperationInit = 2.7f; // 2.7
-    float vorticityStrength = 400.f;// 350*/
+    float vorticityStrength = 0.f;// 400
 
     // grid testing
-    /*int numParticles = 1000; 
-    float gravity = 0.f; // 5500
-    float divergenceModifier = 1.f; 
-    float gridSize = 20.f; 
-    int numPressureIters = 25; 
+    /*int numParticles = 100; 
+    float gravityX = 5000.f; // 5500
+    float gravityY = 0.f;
+    float divergenceModifier = 0.f; 
+    float gridSize = 10.f; 
+    int numPressureIters = 1; 
     float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;
     float seperationInit = 4.5f; // 3.5 for 50, 4.5 for 40
-    float vorticityStrength = 19.5f;*/
+    float vorticityStrength = 0.f;*/
 
     // low
-    int numParticles = 5000; 
-    float gravity = 5500.f; // 5500
-    float divergenceModifier = 6.5f; 
+    /*int numParticles = 5000; 
+    float gravityX = 5500.f; // 5500
+    float gravityY = 0.f;
+    float divergenceModifier = 4.f; // 8 
     float gridSize = 50.f; 
-    int numPressureIters = 30; 
+    int numPressureIters = 7; // 40 
     float diffusionRatio = 0.75f; 
     float flipRatio = 0.8f;
     float seperationInit = 3.5f; // 3.5 for 50, 4.5 for 40
-    float vorticityStrength = 0.f;
+    float vorticityStrength = 0.f;*/
 
     // low
     /*int numParticles = 7000; 
@@ -213,13 +218,13 @@ int main()
 
     const uint32_t maxThreads = std::thread::hardware_concurrency();
 
-    const uint32_t numThreads = std::min(static_cast<uint32_t>(1), maxThreads); // 11
+    const uint32_t numThreads = std::min(static_cast<uint32_t>(11), maxThreads); // 11
 
     tp::ThreadPool thread_pool(numThreads);
 
     const float overRelaxation = 1.9f; // 1.9
 
-    Fluid fluid = Fluid(WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravity, divergenceModifier, diffusionRatio, seperationInit, vorticityStrength, flipRatio, overRelaxation, numPressureIters, thread_pool);  //50
+    Fluid fluid = Fluid(WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravityX, gravityY, divergenceModifier, diffusionRatio, seperationInit, vorticityStrength, flipRatio, overRelaxation, numPressureIters, thread_pool);  //50
 
     bool justPressed = false;
 
@@ -228,7 +233,7 @@ int main()
     oss << std::fixed << std::setprecision(2) << flipRatio; 
 
     std::ostringstream oss2;
-    oss2 << std::fixed << std::setprecision(0) << gravity; 
+    oss2 << std::fixed << std::setprecision(0) << gravityX; 
 
     std::ostringstream oss3;
     oss3 << std::fixed << std::setprecision(1) << divergenceModifier; 
@@ -239,6 +244,9 @@ int main()
     std::ostringstream oss5;
     oss5 << std::fixed << std::setprecision(0) << numPressureIters; 
 
+    std::ostringstream oss6;
+    oss6 << std::fixed << std::setprecision(0) << gravityY; 
+
     bool forceObjectActive = true; 
 
     float totalDT = 0;
@@ -247,11 +255,11 @@ int main()
     while (window.isOpen())
     {
         sf::Time deltaTime = deltaClock.restart();
-        float setDT = 1.f / 240.f;
+        float setDT = 1.f / 120.f;
         float trueDT = deltaTime.asSeconds();
 
         //totalDT += dt;
-        numDT++;
+        //numDT++;
 
         sf::Event event;
         while (window.pollEvent(event))
@@ -328,32 +336,40 @@ int main()
                     fluid.setGeneratorActive(false);
                     fluid.setSolidDrawer(true);
                 }
-                /*else if (event.key.code == sf::Keyboard::Num5) {
-                    fluid.setRigidObjectActive(false);
-                    fluid.setForceObjectActive(false);
-                    fluid.setGeneratorActive(false);
-                    fluid.setSolidDrawer(false);
-                }*/
                 else if (event.key.code == sf::Keyboard::G) {
-                    fluid.addToGravity(100);
+                    fluid.addToGravityX(100);
                     oss2.str("");  
                     oss2.clear();
-                    oss2 << std::fixed << std::setprecision(0) << fluid.getGravity();
+                    oss2 << std::fixed << std::setprecision(0) << fluid.getGravityX();
                 }
                 else if (event.key.code == sf::Keyboard::N) {
-                    fluid.addToGravity(-100);
+                    fluid.addToGravityX(-100);
                     oss2.str("");  
                     oss2.clear();
-                    oss2 << std::fixed << std::setprecision(0) << fluid.getGravity();
+                    oss2 << std::fixed << std::setprecision(0) << fluid.getGravityX();
+                }
+                else if (event.key.code == sf::Keyboard::M) {
+                    fluid.addToGravityY(100);
+                    oss6.str("");  
+                    oss6.clear();
+                    oss6 << std::fixed << std::setprecision(0) << fluid.getGravityY();
+                }
+                else if (event.key.code == sf::Keyboard::H) {
+                    fluid.addToGravityY(-100);
+                    oss6.str("");  
+                    oss6.clear();
+                    oss6 << std::fixed << std::setprecision(0) << fluid.getGravityY();
                 }
                 else if (event.key.code == sf::Keyboard::C) {
-                    fluid.addToDivergenceModifier(0.1);
+                    if (fluid.getDivergenceModifier() > 0) {
+                        fluid.addToDivergenceModifier(-1);
+                    }
                     oss3.str("");  
                     oss3.clear();
                     oss3 << std::fixed << std::setprecision(1) << fluid.getDivergenceModifier();
                 }
                 else if (event.key.code == sf::Keyboard::D) {
-                    fluid.addToDivergenceModifier(-0.1);
+                    fluid.addToDivergenceModifier(1);
                     oss3.str("");  
                     oss3.clear();
                     oss3 << std::fixed << std::setprecision(1) << fluid.getDivergenceModifier();
@@ -365,7 +381,16 @@ int main()
                     fluid.setFireActive(!fluid.getFireActive());
                 }
                 else if (event.key.code == sf::Keyboard::Q) {
-                    //std::cout << "incompressibility time: " << fluid.getTimeForInc() / numDT << ", seperation time: " << fluid.getTimeForSeperation() / numDT << ", grid transfer time: " << fluid.getTimeForTrans() / numDT;
+                    std::cout << 
+                    "Fill Grid: " << fluid.getFillGridTime() << "\n" <<
+                    "Miscellaneous: " << fluid.getMiscellaneousTime() << "\n" <<
+                    "Collision: " << fluid.getCollisionTime() << "\n" <<
+                    "Obstacle Collision: " << fluid.getObstacleCollisionTime() << "\n" <<
+                    "To Grid: " << fluid.getToGridTime() << "\n" <<
+                    "Density Update: " << fluid.getDensityUpdateTime() << "\n" <<
+                    "Projection: " << fluid.getProjectionTime() << "\n" <<
+                    "To Particles: " << fluid.getToParticlesTime() << "\n" <<
+                    "Rendering: " << fluid.getRenderingTime() << "\n";
                     window.close();
                 }
                 else if (event.key.code == sf::Keyboard::Y) {
@@ -374,9 +399,6 @@ int main()
                 else if (event.key.code == sf::Keyboard::U) {
                     fluid.setStep(true);
                 }
-                /*else if (event.key.code == sf::Keyboard::Z) {
-                    fluid.setRandomVelField();
-                }*/
             }
             else if (event.type == sf::Event::MouseButtonPressed) {
                 if (event.mouseButton.button == sf::Mouse::Left) {
@@ -421,7 +443,12 @@ int main()
 
         window.clear();
 
-        fluid.update(trueDT, window, leftMouseDown, rightMouseDown, justPressed);
+        auto start = std::chrono::high_resolution_clock::now();
+
+        fluid.update(setDT, window, leftMouseDown, rightMouseDown, justPressed);
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         if (!fluid.getStop()) {
             frame++;
@@ -451,15 +478,19 @@ int main()
         text.setString(oss2.str());
         window.draw(text);
 
-        text.setPosition(WIDTH - 375, 10);
-        text.setString(oss3.str());
+        text.setPosition(WIDTH - 350, 10);
+        text.setString(oss6.str());
         window.draw(text);
 
         text.setPosition(WIDTH - 475, 10);
-        text.setString(oss4.str());
+        text.setString(oss3.str());
         window.draw(text);
 
         text.setPosition(WIDTH - 575, 10);
+        text.setString(oss4.str());
+        window.draw(text);
+
+        text.setPosition(WIDTH - 675, 10);
         text.setString(oss5.str());
         window.draw(text);
 
