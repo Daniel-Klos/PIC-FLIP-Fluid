@@ -2,7 +2,7 @@
 A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. This implementation uses MICCG(0) for pressure projection.
 
 Controls:
--   Press 1 for an interactive rigid object, 2 for a force object, 3 for an object that generates/removes particles, and 4 to draw/erase solids (left & right click)
+-   Press 1 for an interactive rigid object, 2 for a force object, 3 for an object that generates/removes particles, and 4 to draw/erase solids (left & right click). Use the mouse to change the size of objects.
 -   Press s to bias the simulation towards pic, and b to bias the simulation towards flip.
 -   Use the mouse wheel to increase/decrease the radius of objects
 -   Press w to decrease the vorticity confinement, and e to increase it
