@@ -1216,6 +1216,8 @@ public:
         const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
 
+        //std::cout << numColumnsPerThread << "\n";
+
         std::fill(begin(dotProducts), end(dotProducts), 0.0);
 
         for (int i = 0; i < numThreads_; ++i) {
@@ -1225,6 +1227,8 @@ public:
                 this->Dot(a, b, start, end, dotProducts[i]);
             });
         }
+
+        thread_pool.waitForCompletion();
 
         double res = 0.0;
         for (double el : dotProducts) {
@@ -1237,7 +1241,11 @@ public:
     void Dot(std::vector<double> *a, std::vector<double> *b, int start, int end, double& res) {
         for (int i = start; i < end; ++i) {
             if (cellType[i] == FLUID_CELL) {
+                bool check = !std::isnan(res);
                 res += (*a)[i] * (*b)[i];
+                if (std::isnan(res) && check) {
+                    std::cout << i << ", " << (*a).size() << ", " << (*b).size() << ", " << (*a)[i] << ", " << (*b)[i] << "\n";
+                }
             }
         }
     }
@@ -1492,13 +1500,13 @@ public:
 
         // DotMulti needs to be debugged, EqualsPlusTimesMulti good
 
-        //double sigma = 0.0;
-        //Dot(&z, &residual, 0, numX * numY, sigma);
-
+        /*double sigma = 0.0;
+        Dot(&z, &residual, 0, numX * numY, sigma);*/
         double sigma = DotMulti(&z, &residual);
 
         for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
             matVec(&z, &search);
+
             //double denom = 0.0;
             //Dot(&z, &search, 0, numX * numY, denom);
             //double alpha = sigma / denom;
@@ -1509,7 +1517,6 @@ public:
 
             applyPreconditioner(&z, &residual);
 
-            //double sigmaNew = Dot(&z, &residual, 0, numX * numY);
             //double sigmaNew = 0.0;
             //Dot(&z, &residual, 0, numX * numY, sigmaNew);
 
