@@ -220,6 +220,17 @@ class Fluid {
 
     std::vector<double> dotProducts;
 
+    float miscellaneousTime = 0.f;
+    float CollisionTime = 0.f;
+    float ObstacleCollisionTime = 0.f;
+    float ToGridTime = 0.f;
+    float DensityUpdateTime = 0.f;
+    float ProjectionTime = 0.f;
+    float ToParticlesTime = 0.f;
+    float RenderingTime = 0.f;
+    float FillGridTime = 0.f;
+    float steps = 0.f;
+
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravityX_, float gravityY_, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
         : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravityX(gravityX_), gravityY(gravityY_), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
@@ -1216,8 +1227,6 @@ public:
         const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
 
-        //std::cout << numColumnsPerThread << "\n";
-
         std::fill(begin(dotProducts), end(dotProducts), 0.0);
 
         for (int i = 0; i < numThreads_; ++i) {
@@ -1243,9 +1252,6 @@ public:
             if (cellType[i] == FLUID_CELL) {
                 bool check = !std::isnan(res);
                 res += (*a)[i] * (*b)[i];
-                if (std::isnan(res) && check) {
-                    std::cout << i << ", " << (*a).size() << ", " << (*b).size() << ", " << (*a)[i] << ", " << (*b)[i] << "\n";
-                }
             }
         }
     }
@@ -2061,6 +2067,10 @@ public:
         window.draw(va, states);
     }
 
+    void addValueToAverage(float& value, float newValue) {
+        value += (newValue - value) / steps;
+    }
+
     void update(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
@@ -2074,6 +2084,9 @@ public:
     }
 
     void simulate(float dt_, bool leftMouseDown_, bool rightMouseDown_, bool justPressed) {
+
+        ++steps;
+
         // order of need of implementation/optimization:
             // 1) incompressibility -- implement preconditioned conjugate gradient
             // 2) implement stable volume correction
@@ -2083,7 +2096,22 @@ public:
         // collision, rendering, and to particles all great
         dt = dt_;
 
+        this->integrateMulti();
+
+        if (fireActive) {
+            std::fill(begin(collisions), end(collisions), 0);
+        }
+
         auto start = std::chrono::high_resolution_clock::now();
+
+        addObjectsToGrids();
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        addValueToAverage(FillGridTime, duration.count());
+
+        start = std::chrono::high_resolution_clock::now();
         leftMouseDown = leftMouseDown_;
         rightMouseDown = rightMouseDown_;
 
@@ -2093,14 +2121,6 @@ public:
         else if (solidDrawing && rightMouseDown) {
             this->eraseSolids();
         }
-
-        this->integrateMulti();
-
-        if (fireActive) {
-            std::fill(begin(collisions), end(collisions), 0);
-        }
-        
-        addObjectsToGrids();
 
         if (generatorActive && leftMouseDown) {
             this->generate();
@@ -2116,10 +2136,10 @@ public:
             this->makeForceObjectQueries(1000); // pushing, 1000
         }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "miscellaneous: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(miscellaneousTime, duration.count());
 
 
 
@@ -2130,7 +2150,7 @@ public:
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "collision: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(CollisionTime, duration.count());
 
 
 
@@ -2146,7 +2166,7 @@ public:
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "obstacle collision: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(ObstacleCollisionTime, duration.count());
 
 
 
@@ -2158,7 +2178,7 @@ public:
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "to grid: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(ToGridTime, duration.count());
 
 
 
@@ -2168,7 +2188,7 @@ public:
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "density update: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(DensityUpdateTime, duration.count());
 
 
 
@@ -2188,7 +2208,7 @@ public:
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "projection: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(ProjectionTime, duration.count());
 
 
 
@@ -2199,7 +2219,7 @@ public:
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "to particles: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(ToParticlesTime, duration.count());
     }
 
     void render(sf::RenderWindow& window) {
@@ -2248,7 +2268,43 @@ public:
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        //std::cout << "rendering: " << duration.count() << " milliseconds" << "\n";
+        addValueToAverage(RenderingTime, duration.count());
+    }
+
+    float getFillGridTime() {
+        return FillGridTime;
+    }
+
+    float getMiscellaneousTime() {
+        return miscellaneousTime;
+    }
+
+    float getCollisionTime() {
+        return CollisionTime;
+    }
+
+    float getObstacleCollisionTime() {
+        return ObstacleCollisionTime;
+    }
+
+    float getToGridTime() {
+        return ToGridTime;
+    }
+
+    float getDensityUpdateTime() {
+        return DensityUpdateTime;
+    }
+
+    float getProjectionTime() {
+        return ProjectionTime;
+    }
+
+    float getToParticlesTime() {
+        return ToParticlesTime;
+    }
+
+    float getRenderingTime() {
+        return RenderingTime;
     }
 
     void addToForceObjectRadius(float add) {
