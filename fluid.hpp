@@ -115,7 +115,8 @@ class Fluid {
     int32_t scaledWIDTH;
     int32_t scaledHEIGHT;
 
-    CollisionGrid grid;
+    CollisionGrid collisionGrid;
+    CollisionGrid cellOccupantsGrid;
 
     float dt;
 
@@ -188,8 +189,6 @@ class Fluid {
 
     sf::RectangleShape cellDrawer;
 
-    std::vector<std::vector<int>> cellOccupants;
-
     bool stop = false;
     bool step = false;
 
@@ -229,6 +228,7 @@ class Fluid {
     float ToParticlesTime = 0.f;
     float RenderingTime = 0.f;
     float FillGridTime = 0.f;
+    float SimStepTime = 0.f;
     float steps = 0.f;
 
 public:
@@ -244,7 +244,10 @@ public:
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
 
-            this->dotProducts.resize(numThreads);
+            this->cellSpacing = std::max(WIDTH / numX, HEIGHT / numY);
+            this->invSpacing = 1.f / this->cellSpacing;
+
+            this->radius = 0.3 * cellSpacing;
 
             this->halfSpacing = cellSpacing / 2;
 
@@ -257,11 +260,12 @@ public:
             this->particlesPerThread = numParticles / numThreads;
             this->numMissedParticles = numParticles - numThreads * particlesPerThread;
 
+            this->dotProducts.resize(numThreads);
+
             auto size = sf::Vector2f(cellSpacing, cellSpacing);
             this->cellDrawer.setSize(size);
             this->cellDrawer.setOutlineColor(sf::Color::White);
             this->cellDrawer.setOutlineThickness(1.f);
-            this->cellOccupants.resize(numX * numY);
 
             this->Adiag.resize(numX * numY);
             this->si.resize(numX * numY);
@@ -325,17 +329,14 @@ public:
             textureSizeX = texture_size.x;
             textureSizeY = texture_size.y;
 
-            this->cellSpacing = std::max(WIDTH / numX, HEIGHT / numY);
-            this->invSpacing = 1.f / this->cellSpacing;
-
-            this->radius = 0.3 * cellSpacing;
-
             this->scalingFactor = 2 * radius;
 
             this->scaledWIDTH = std::ceil(static_cast<float>(WIDTH) / scalingFactor);
             this->scaledHEIGHT = std::ceil(static_cast<float>(HEIGHT) / scalingFactor);
 
-            grid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
+            collisionGrid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
+
+            cellOccupantsGrid = CollisionGrid(numX, numY);
 
             // initializing particle positions
             float separation = radius / separationInit;  // gridsize: 65: 2.5; 70: 2.3; 90: 2.f; 130: 1.2
@@ -507,9 +508,8 @@ public:
 
     void addObjectsToGrids()
     {
-        grid.clear();
-        cellOccupants.clear();
-        cellOccupants.resize(numX * numY);
+        collisionGrid.clear();
+        cellOccupantsGrid.clear();
 
         const float minX = cellSpacing;
         const float maxX = WIDTH - cellSpacing;
@@ -524,11 +524,12 @@ public:
 
                 int32_t gridX = x / scalingFactor;
                 int32_t gridY = y / scalingFactor;
-                grid.addAtom(gridX, gridY, i);
+                collisionGrid.addAtom(gridX, gridY, i);
                 
+                // THIS SHIT IS TAKING A LONG FUCKING TIME
                 int32_t cellOccupantsX = x / cellSpacing;
                 int32_t cellOccupantsY = y / cellSpacing;
-                cellOccupants[cellOccupantsX * numY + cellOccupantsY].push_back(index);
+                cellOccupantsGrid.addAtom(cellOccupantsX, cellOccupantsY, i);
 
             }
             ++i;
@@ -576,20 +577,20 @@ public:
         for (uint32_t i{0}; i < c.objects_count; ++i) {
             const uint32_t atom_idx = c.objects[i];
             for (int32_t side = 0; side < 2; ++side) {
-                checkAtomCellCollisions(atom_idx, grid.data[index + grid.height + side]);
+                checkAtomCellCollisions(atom_idx, collisionGrid.data[index + collisionGrid.height + side]);
             }
             for (int32_t side = 0; side < 2; ++side) {
-                checkAtomCellCollisions(atom_idx, grid.data[index + side]);   
+                checkAtomCellCollisions(atom_idx, collisionGrid.data[index + side]);   
             }
             //checkAtomCellCollisions(atom_idx, grid.data[index - grid.height]);
-            checkAtomCellCollisions(atom_idx, grid.data[index - grid.height + 1]);
+            checkAtomCellCollisions(atom_idx, collisionGrid.data[index - collisionGrid.height + 1]);
         }
     }
 
     void solveCollisionThreaded(uint32_t start, uint32_t end)
     {
         for (uint32_t idx{start}; idx < end; ++idx) {
-            processCell(grid.data[idx], idx);
+            processCell(collisionGrid.data[idx], idx);
         }
     }
 
@@ -604,7 +605,7 @@ public:
 
                 if (mouseRow + i <= 1 || mouseRow + i >= scaledHEIGHT - 1 || mouseColumn + j <= 1 || mouseColumn + j >= scaledWIDTH - 1) continue;
 
-                const auto cell = grid.data[mouseRow + i + grid.height * (mouseColumn + j)];
+                const auto cell = collisionGrid.data[mouseRow + i + collisionGrid.height * (mouseColumn + j)];
 
                 for (uint32_t i{0}; i < cell.objects_count; ++i) {
                     const uint32_t particleIndex = cell.objects[i];
@@ -632,7 +633,7 @@ public:
     {
         const uint32_t thread_count = thread_pool.m_thread_count;
         const uint32_t slice_count  = thread_count * 2;
-        const uint32_t slice_size   = (grid.width / slice_count) * grid.height;
+        const uint32_t slice_size   = (collisionGrid.width / slice_count) * collisionGrid.height;
         const uint32_t last_cell    = 2 * thread_count * slice_size;
         
         for (uint32_t i{0}; i < thread_count; ++i) {
@@ -643,9 +644,9 @@ public:
             });
         }
         
-        if (last_cell < grid.data.size()) {
+        if (last_cell < collisionGrid.data.size()) {
             thread_pool.addTask([this, last_cell]{
-                solveCollisionThreaded(last_cell, static_cast<uint32_t>(grid.data.size()));
+                solveCollisionThreaded(last_cell, static_cast<uint32_t>(collisionGrid.data.size()));
             });
         }
         thread_pool.waitForCompletion();
@@ -1044,10 +1045,14 @@ public:
         thread_pool.waitForCompletion();
     }
 
-    void transferToUGrid() {
-        for (int32_t i = 0; i < this->numParticles; ++i) {
-            const int32_t ui = 2 * i;
-            const int32_t vi = 2 * i + 1;
+    void transferToUGridCells(int idx) {
+        const auto cell = cellOccupantsGrid.data[idx];
+    
+        for (uint32_t id{0}; id < cell.objects_count; ++id) {
+            const uint32_t particleIndex = cell.objects[id];
+
+            const int32_t ui = 2 * particleIndex;
+            const int32_t vi = 2 * particleIndex + 1;
             const int32_t nr0_u = nr0[ui];
             const int32_t nr1_u = nr1[ui];
             const int32_t nr2_u = nr2[ui];
@@ -1073,10 +1078,24 @@ public:
         }
     }
 
-    void transferToVGrid() {
-        for (int32_t i = 0; i < numParticles; ++i) {
-            const int32_t ui = 2 * i;
-            const int32_t vi = 2 * i + 1;
+    void transferToUGrid(int start, int end) {
+
+        for (int i = start; i < end; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                transferToUGridCells(idx);
+            }
+        }
+    }
+
+    void transferToVGridCells(int idx) {
+        const auto cell = cellOccupantsGrid.data[idx];
+    
+        for (uint32_t id{0}; id < cell.objects_count; ++id) {
+            const uint32_t particleIndex = cell.objects[id];
+
+            const int32_t ui = 2 * particleIndex;
+            const int32_t vi = 2 * particleIndex + 1;
             const int32_t nr0_v = nr0[vi];
             const int32_t nr1_v = nr1[vi];
             const int32_t nr2_v = nr2[vi];
@@ -1102,17 +1121,35 @@ public:
         }
     }
 
+    void transferToVGrid(int start, int end) {
+
+        for (int i = start; i < end; ++i) {
+            for (int j = 1; j < numY - 1; ++j) {
+                int idx = i * n + j;
+                transferToVGridCells(idx);
+            }
+        }
+    }
+
     void transferToGrid() {
 
         // u and v grids are staggered, so make sure that you subtract half cell spacing from particle y positions when transferring this->u to particles and vice versa for this->v
 
-        // need to add complete multithreading here; dont just use 2 threads to do both grids at the same time, but also divide up the grids using all remaining threads
-        thread_pool.addTask([&]() {
-            this->transferToUGrid();
-        });
-        thread_pool.addTask([&]() {
-            this->transferToVGrid();
-        });
+        int halfNumRemainingThreads = std::max(1u, (numThreads - 2) / 2);
+        const int32_t numColumnsPerThread = (numX - 2) / halfNumRemainingThreads;
+        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * halfNumRemainingThreads;
+
+        for (int i = 0; i < halfNumRemainingThreads; ++i) {
+            int start = i * numColumnsPerThread;
+            int end = (i == halfNumRemainingThreads - 1) ? (numX - 1) : (start + numColumnsPerThread);
+            thread_pool.addTask([&, start, end]() {
+                this->transferToUGrid(start, end);
+            });
+            thread_pool.addTask([&, start, end]() {
+                this->transferToVGrid(start, end);
+            });
+        }
+
         thread_pool.waitForCompletion();
 
 
@@ -1140,13 +1177,11 @@ public:
 
             x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
             y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
-            // x0 is the grid position to the left of the particle, x1 is the position to the right of the particle. Both can only go up to the second to last cell to the right in the gridbecause we dont want to be changing wall velocities
+
             int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), this->numX - 2));
-            // x - xCell to get the weight of that cell in relation to the particle
-            // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied by grid spacing
             float tx = ((x - halfSpacing) - x0 * cellSpacing) * invSpacing;
-            // add 1 to get the cell to the right
             int x1 = std::min(x0 + 1, this->numX - 1);
+            
             int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), this->numY - 2));
             float ty = ((y - halfSpacing) - y0 * cellSpacing) * invSpacing;
             int y1 = std::min(y0 + 1, this->numY - 2);
@@ -1219,10 +1254,6 @@ public:
     }
 
     double DotMulti(std::vector<double> *a, std::vector<double> *b) {
-        /*const int32_t numThreads = thread_pool.m_thread_count;
-        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
-        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;*/
-
         const int32_t numThreads_ = 1;
         const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
@@ -1250,17 +1281,12 @@ public:
     void Dot(std::vector<double> *a, std::vector<double> *b, int start, int end, double& res) {
         for (int i = start; i < end; ++i) {
             if (cellType[i] == FLUID_CELL) {
-                bool check = !std::isnan(res);
                 res += (*a)[i] * (*b)[i];
             }
         }
     }
 
     void EqualsPlusTimesMulti(std::vector<double> *a, std::vector<double> *b, double c) {
-        /*const int32_t numThreads = thread_pool.m_thread_count;
-        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
-        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;*/
-
         const int32_t numThreads_ = 2;
         const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
@@ -1748,51 +1774,60 @@ public:
         const int32_t numCovered = std::ceil(generatorRadius / scalingFactor);
         const uint32_t mouseColumn = std::floor(mouseX / scalingFactor);
         const uint32_t mouseRow = std::floor(mouseY / scalingFactor);
+        const size_t double_len = positions.size();
+        const size_t triple_len = particleColors.size();
+        const size_t quadruple_len = 2 * double_len;
     
-        int vaSize = va.getVertexCount();
+        size_t vaSize = va.getVertexCount();
         vaCopy.resize(vaSize);
     
         for (int i = 0; i < vaSize; ++i) {
             vaCopy[i] = va[i];
         }
-    
-        std::vector<bool> toRemove(positions.size() / 2, false);
+
+        size_t remove = 0;
         
         for (int32_t i = -numCovered; i < numCovered + 1; ++i) {
             for (int32_t j = -numCovered; j < numCovered + 1; ++j) {
                 if (mouseRow + j <= 1 || mouseRow + j >= scaledHEIGHT - 1 || mouseColumn + i <= 1 || mouseColumn + i >= scaledWIDTH - 1)
                     continue;
     
-                const auto cell = grid.data[mouseRow + j + grid.height * (mouseColumn + i)];
+                const auto cell = collisionGrid.data[mouseRow + j + collisionGrid.height * (mouseColumn + i)];
     
                 for (uint32_t id{0}; id < cell.objects_count; ++id) {
                     const uint32_t particleIndex = cell.objects[id];
+
+                    size_t doubleid = 2 * particleIndex;
+                    size_t tripleid = 3 * particleIndex;
+                    size_t quadrupleid = 4 * particleIndex;
+
+                    size_t doubleremove = 2 * remove;
+                    size_t tripleremove = 3 * remove;
+                    size_t quadrupleremove = 4 * remove;
     
-                    particleColors[3 * particleIndex] = 0;
-                    particleColors[3 * particleIndex + 1] = 255;
-                    particleColors[3 * particleIndex + 2] = 0;
-    
-                    numParticles--;
-                    toRemove[particleIndex] = true;
+                    if (2 * particleIndex + 2 < double_len) {
+                        positions[doubleid] = positions[double_len - 2 - doubleremove];
+                        positions[doubleid + 1] = positions[double_len - 1 - doubleremove];
+
+                        velocities[doubleid] = velocities[double_len - 2 - doubleremove];
+                        velocities[doubleid + 1] = velocities[double_len - 1 - doubleremove];
+
+                        particleColors[tripleid] = particleColors[triple_len - 3 - tripleremove];
+                        particleColors[tripleid + 1] = particleColors[triple_len - 2 - tripleremove];
+                        particleColors[tripleid + 2] = particleColors[triple_len - 1 - tripleremove];
+
+                        vaCopy[quadrupleid] = vaCopy[quadruple_len - 4 - quadrupleremove];
+                        vaCopy[quadrupleid + 1] = vaCopy[quadruple_len - 3 - quadrupleremove];
+                        vaCopy[quadrupleid + 2] = vaCopy[quadruple_len - 2 - quadrupleremove];
+                        vaCopy[quadrupleid + 3] = vaCopy[quadruple_len - 1 - quadrupleremove];
+                    }
+
+                    remove++;
                 }
             }
         }
-    
-        for (int i = positions.size() / 2 - 1; i >= 0; --i) {
-            if (toRemove[i]) {
-                auto positionsStart = positions.begin() + 2 * i;
-                this->positions.erase(positionsStart, positionsStart + 2);
-    
-                auto velocitiesStart = velocities.begin() + 2 * i;
-                this->velocities.erase(velocitiesStart, velocitiesStart + 2);
-    
-                auto colorsStart = particleColors.begin() + 3 * i;
-                this->particleColors.erase(colorsStart, colorsStart + 3);
-    
-                auto vaStart = vaCopy.begin() + 4 * i;
-                this->vaCopy.erase(vaStart, vaStart + 4);
-            }
-        }
+
+        numParticles -= remove;
     
         this->positions.resize(2 * numParticles);
         this->velocities.resize(2 * numParticles);
@@ -2076,7 +2111,11 @@ public:
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
         if (!stop || step) {
+            auto start = std::chrono::high_resolution_clock::now();
             this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+            addValueToAverage(SimStepTime, duration.count());
             step = false;
         }
 
@@ -2088,9 +2127,8 @@ public:
         ++steps;
 
         // order of need of implementation/optimization:
-            // 1) incompressibility -- implement preconditioned conjugate gradient
+            // 1) incompressibility -- optimize PCG
             // 2) implement stable volume correction
-            // 2) to grid -- Don't just do both grids at the same time, but multithread the particles as well. Make a grid similar to collision grid with the proper amount of cells for each u and v grid and use those as neighbor buckets to look up
             // 3) updateDensity -- Same idea as to grid
 
         // collision, rendering, and to particles all great
@@ -2156,7 +2194,6 @@ public:
 
 
 
-
         start = std::chrono::high_resolution_clock::now();
 
         this->collideSurfacesMulti();
@@ -2172,14 +2209,12 @@ public:
 
 
 
-
         start = std::chrono::high_resolution_clock::now();
         this->transfer(true);
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         addValueToAverage(ToGridTime, duration.count());
-
 
 
 
@@ -2209,7 +2244,6 @@ public:
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         addValueToAverage(ProjectionTime, duration.count());
-
 
 
 
@@ -2269,6 +2303,14 @@ public:
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         addValueToAverage(RenderingTime, duration.count());
+    }
+
+    float getCombinedTime() {
+        return FillGridTime + miscellaneousTime + CollisionTime + ObstacleCollisionTime + ToGridTime + DensityUpdateTime + ProjectionTime + ToParticlesTime + RenderingTime;
+    }
+
+    float getSimStepTime() {
+        return SimStepTime;
     }
 
     float getFillGridTime() {
