@@ -28,7 +28,8 @@ int main()
 
     // experiment
     /*int numParticles = 15000; 
-    float gravity = 5500.f; 
+    float gravityX = 5500.f;
+    float gravityY = 0.f;
     float divergenceModifier = 8.5f; 
     float gridSize = 70.f; 
     int numPressureIters = 50; 
@@ -39,7 +40,8 @@ int main()
 
     // space
     /*int numParticles = 1000; 
-    float gravity = 0.f; 
+    float gravityX = 5500.f;
+    float gravityY = 0.f;
     float divergenceModifier = 15.f; 
     float gridSize = 90.f; 
     int numPressureIters = 30; 
@@ -50,7 +52,8 @@ int main()
 
     // lots
     /*int32_t numParticles = 25000; 
-    float gravity = 5400.f; 
+    float gravityX = 5500.f;
+    float gravityY = 0.f;
     float divergenceModifier = 9.5f; 
     float gridSize = 80.f; 
     int32_t numPressureIters = 30; 
@@ -61,7 +64,8 @@ int main()
 
     // fire
     /*int32_t numParticles = 14500; //13000
-    float gravity = 5500.f; 
+    float gravityX = 5500.f; 
+    float gravityY = 0.f;
     float divergenceModifier = 40.f; 
     float gridSize = 50.f;  
     int32_t numPressureIters = 30; // 30 
@@ -74,9 +78,9 @@ int main()
     /*int32_t numParticles = 30000; 
     float gravityX = 5500.f; 
     float gravityY = 0.f;
-    float divergenceModifier = 30.f; // 8.5 for 15000 
+    float divergenceModifier = 15.f; // 8.5 for 15000 
     float gridSize = 100.f; // 100
-    int32_t numPressureIters = 30; // 30 
+    int32_t numPressureIters = 7; // 30 
     float diffusionRatio = 0.85f; 
     float flipRatio = 0.9f;
     float seperationInit = 1.9f; // 1.9 for 100, 2.4 for 80
@@ -86,17 +90,18 @@ int main()
     /*int numParticles = 26400; 
     float gravityX = 4500.f; 
     float gravityY = 0.f;
-    float divergenceModifier = 10.f;
+    float divergenceModifier = 5.f;
     float gridSize = 85.f; 
-    int numPressureIters = 30;
+    int numPressureIters = 4;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;
     float seperationInit = 2.f;
-    float vorticityStrength = 150.f;*/
+    float vorticityStrength = 0.f;*/
 
     // put laptop on performance mode
     /*int numParticles = 35000; 
-    float gravity = 4500.f; // 4500
+    float gravityX = 5500.f4500.f; // 4500
+    float gravityY = 0.f;
     float divergenceModifier = 17.f;
     float gridSize = 90.f; 
     int numPressureIters = 30;
@@ -107,7 +112,8 @@ int main()
 
     // vorticity testing
     /*int numParticles = 30000; 
-    float gravity = 0.f; // 4500
+    float gravityX = 5500.f; // 4500
+    float gravityY = 0.f;
     float divergenceModifier = 21.f;
     float gridSize = 74.f; 
     int numPressureIters = 30;
@@ -116,8 +122,10 @@ int main()
     float seperationInit = 2.75f;
     float vorticityStrength = 2.f;*/
 
+    // fire mode
     /*int numParticles = 20000; 
-    float gravity = 0.f; // 4500
+    float gravityX = 5500.f; // 4500
+    float gravityY = 0.f;
     float divergenceModifier = 21.f;
     float gridSize = 56.f; 
     int numPressureIters = 30;
@@ -128,7 +136,7 @@ int main()
 
     // fire hazard 
     /*int numParticles = 50000; 
-    float gravity = 4700.f; 
+    float gravityX = 5500.f4700.f; 
     float divergenceModifier = 8.5f; 
     float gridSize = 100.f; 
     int numPressureIters = 25; 
@@ -141,9 +149,9 @@ int main()
     int32_t numParticles = 15000; 
     float gravityX = 5500.f; // 5500
     float gravityY = 0.f;
-    float divergenceModifier = 25.f; //4, 10
+    float divergenceModifier = 2.f; //4, 10
     float gridSize = 70.f; 
-    int32_t numPressureIters = 2; // 7, 20
+    int32_t numPressureIters = 6; // 7, 20
     float diffusionRatio = 0.85f; 
     float flipRatio = 0.9f;
     float seperationInit = 2.7f; // 2.7
@@ -175,7 +183,7 @@ int main()
 
     // low
     /*int numParticles = 7000; 
-    float gravity = 5500.f; // 5500
+    float gravityX = 5500.f5500.f; // 5500
     float divergenceModifier = 6.5f; 
     float gridSize = 50.f; 
     int numPressureIters = 20; 
@@ -390,7 +398,9 @@ int main()
                     "Density Update: " << fluid.getDensityUpdateTime() << "\n" <<
                     "Projection: " << fluid.getProjectionTime() << "\n" <<
                     "To Particles: " << fluid.getToParticlesTime() << "\n" <<
-                    "Rendering: " << fluid.getRenderingTime() << "\n";
+                    "Rendering: " << fluid.getRenderingTime() << "\n" <<
+                    "Combined: " << fluid.getCombinedTime() << "\n" <<
+                    "Whole Step: " << fluid.getSimStepTime() << "\n";
                     window.close();
                 }
                 else if (event.key.code == sf::Keyboard::Y) {
