@@ -11,6 +11,10 @@
 
 #include "fluid.hpp"
 
+void addValueToAverage(float& value, float newValue, int steps) {
+    value += (newValue - value) / steps;
+}
+
 int main()
 {
     // Adjust the sim to a good size for you. Note that if you change these numbers, you will have to change the settings
@@ -90,9 +94,9 @@ int main()
     /*int numParticles = 26400; 
     float gravityX = 4500.f; 
     float gravityY = 0.f;
-    float divergenceModifier = 5.f;
+    float divergenceModifier = 100.f;
     float gridSize = 85.f; 
-    int numPressureIters = 4;
+    int numPressureIters = 1;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;
     float seperationInit = 2.f;
@@ -100,15 +104,15 @@ int main()
 
     // put laptop on performance mode
     /*int numParticles = 35000; 
-    float gravityX = 5500.f4500.f; // 4500
+    float gravityX = 5500.f; // 4500
     float gravityY = 0.f;
-    float divergenceModifier = 17.f;
+    float divergenceModifier = 100.f;
     float gridSize = 90.f; 
-    int numPressureIters = 30;
+    int numPressureIters = 1;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;
     float seperationInit = 2.15f;
-    float vorticityStrength = 500.f;*/
+    float vorticityStrength = 0.f;*/
 
     // vorticity testing
     /*int numParticles = 30000; 
@@ -149,10 +153,10 @@ int main()
     int32_t numParticles = 15000; 
     float gravityX = 5500.f; // 5500
     float gravityY = 0.f;
-    float divergenceModifier = 2.f; //4, 10
+    float divergenceModifier = 5.f; //5, 10
     float gridSize = 70.f; 
-    int32_t numPressureIters = 6; // 7, 20
-    float diffusionRatio = 0.85f; 
+    int32_t numPressureIters = 8; // 8, 20
+    float diffusionRatio = 0.85f; // 0.85
     float flipRatio = 0.9f;
     float seperationInit = 2.7f; // 2.7
     float vorticityStrength = 0.f;// 400
@@ -183,7 +187,8 @@ int main()
 
     // low
     /*int numParticles = 7000; 
-    float gravityX = 5500.f5500.f; // 5500
+    float gravityX = 5500.f5
+    float gravityY = 0.f; // 5500
     float divergenceModifier = 6.5f; 
     float gridSize = 50.f; 
     int numPressureIters = 20; 
@@ -211,7 +216,7 @@ int main()
 
     sf::Clock deltaClock;
 
-    window.setFramerateLimit(120); // 120
+    //window.setFramerateLimit(120); // 120
     //window.setMouseCursorVisible(false);
 
     int frame = 0;
@@ -260,14 +265,20 @@ int main()
     float totalDT = 0;
     float numDT = 0;
 
+    float afterSimStep = 0.f;
+    float beforeSimStep = 0.f;
+
     while (window.isOpen())
     {
+
+        auto start = std::chrono::high_resolution_clock::now();
+
         sf::Time deltaTime = deltaClock.restart();
         float setDT = 1.f / 120.f;
         float trueDT = deltaTime.asSeconds();
 
         //totalDT += dt;
-        //numDT++;
+        numDT++;
 
         sf::Event event;
         while (window.pollEvent(event))
@@ -292,7 +303,7 @@ int main()
                         oss << std::fixed << std::setprecision(2) << fluid.getFlipRatio();
                     }
                 }
-                if (event.key.code == sf::Keyboard::E) {
+                else if (event.key.code == sf::Keyboard::E) {
                     fluid.addToVorticityStrength(10);
                     oss4.str("");  
                     oss4.clear();
@@ -306,7 +317,7 @@ int main()
                         oss4 << std::fixed << std::setprecision(1) << fluid.getVorticityStrength();
                     }
                 }
-                if (event.key.code == sf::Keyboard::P) {
+                else if (event.key.code == sf::Keyboard::P) {
                     fluid.addToNumPressureIters(1);
                     oss5.str("");  
                     oss5.clear();
@@ -400,7 +411,9 @@ int main()
                     "To Particles: " << fluid.getToParticlesTime() << "\n" <<
                     "Rendering: " << fluid.getRenderingTime() << "\n" <<
                     "Combined: " << fluid.getCombinedTime() << "\n" <<
-                    "Whole Step: " << fluid.getSimStepTime() << "\n";
+                    "Whole Step: " << fluid.getSimStepTime() << "\n" <<
+                    "Before Sim Step: " << beforeSimStep << "\n" <<
+                    "After Sim Step: " << afterSimStep << "\n";
                     window.close();
                 }
                 else if (event.key.code == sf::Keyboard::Y) {
@@ -435,11 +448,11 @@ int main()
                     fluid.addToForceObjectRadius(20 * mouseWheelDelta);
                 }
 
-                if (fluid.getGeneratorActive()) {
+                else if (fluid.getGeneratorActive()) {
                     fluid.addToGeneratorRadius(20 * mouseWheelDelta);
                 }
 
-                if (fluid.getPencilActive()) {
+                else if (fluid.getPencilActive()) {
                     int pencilRadius = fluid.getPencilRadius();
                     if (!(pencilRadius > fluid.getNumX() / 2 && mouseWheelDelta > 0)) {
                         fluid.addToPencilRadius(mouseWheelDelta);
@@ -453,13 +466,18 @@ int main()
 
         window.clear();
 
-        auto start = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        addValueToAverage(beforeSimStep, duration.count(), numDT);
+
+        //auto start = std::chrono::high_resolution_clock::now();
 
         fluid.update(setDT, window, leftMouseDown, rightMouseDown, justPressed);
         
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        //auto end = std::chrono::high_resolution_clock::now();
+        //auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
+        start = std::chrono::high_resolution_clock::now();
         if (!fluid.getStop()) {
             frame++;
             if (frame == 20) {
@@ -507,6 +525,9 @@ int main()
         window.display();
  
         justPressed = false;
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        addValueToAverage(afterSimStep, duration.count(), numDT);
        
     }
 
