@@ -230,6 +230,11 @@ class Fluid {
     float FillGridTime = 0.f;
     float SimStepTime = 0.f;
     float steps = 0.f;
+    float DotTime = 0.f;
+    float EqualsPlusTime = 0.f;
+    float preconditioningTime = 0.f;
+    float matVecTime = 0.f;
+    float scaledAddTime = 0.f;
 
 public:
     Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravityX_, float gravityY_, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
@@ -1133,9 +1138,7 @@ public:
 
     void transferToGrid() {
 
-        // u and v grids are staggered, so make sure that you subtract half cell spacing from particle y positions when transferring this->u to particles and vice versa for this->v
-
-        int halfNumRemainingThreads = std::max(1u, (numThreads - 2) / 2);
+        const int32_t halfNumRemainingThreads = numThreads > 3 ? (numThreads - 2) / 2 : 1;
         const int32_t numColumnsPerThread = (numX - 2) / halfNumRemainingThreads;
         const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * halfNumRemainingThreads;
 
@@ -1181,7 +1184,7 @@ public:
             int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), this->numX - 2));
             float tx = ((x - halfSpacing) - x0 * cellSpacing) * invSpacing;
             int x1 = std::min(x0 + 1, this->numX - 1);
-            
+
             int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), this->numY - 2));
             float ty = ((y - halfSpacing) - y0 * cellSpacing) * invSpacing;
             int y1 = std::min(y0 + 1, this->numY - 2);
@@ -1287,7 +1290,7 @@ public:
     }
 
     void EqualsPlusTimesMulti(std::vector<double> *a, std::vector<double> *b, double c) {
-        const int32_t numThreads_ = 2;
+        const int32_t numThreads_ = 1;
         const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
 
@@ -1311,7 +1314,7 @@ public:
     }
 
     void applyPressureMulti() {
-        const int32_t numThreads_ = 2;
+        const int32_t numThreads_ = 1;
         const int32_t numColumnsPerThread = (numX - 2) / numThreads_;
         const int32_t numMissedColumns = (numX - 2) - numColumnsPerThread * numThreads_;
 
@@ -1534,7 +1537,14 @@ public:
 
         /*double sigma = 0.0;
         Dot(&z, &residual, 0, numX * numY, sigma);*/
+        auto start = std::chrono::high_resolution_clock::now();
+
         double sigma = DotMulti(&z, &residual);
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        addValueToAverage(DotTime, duration.count());
 
         for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
             matVec(&z, &search);
@@ -1544,21 +1554,78 @@ public:
             //double alpha = sigma / denom;
 
             double alpha = sigma / DotMulti(&z, &search);
+
+            start = std::chrono::high_resolution_clock::now();
             ScaledAdd(pressure, search, alpha);
+            end = std::chrono::high_resolution_clock::now();
+            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+            addValueToAverage(scaledAddTime, duration.count());
+
             ScaledAdd(residual, z, -alpha);
 
+            start = std::chrono::high_resolution_clock::now();
             applyPreconditioner(&z, &residual);
+            end = std::chrono::high_resolution_clock::now();
+            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+            addValueToAverage(preconditioningTime, duration.count());
 
             //double sigmaNew = 0.0;
             //Dot(&z, &residual, 0, numX * numY, sigmaNew);
 
             double sigmaNew = DotMulti(&z, &residual);
             
+            start = std::chrono::high_resolution_clock::now();
             EqualsPlusTimesMulti(&search, &z, sigmaNew / sigma);
+            end = std::chrono::high_resolution_clock::now();
+            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+            addValueToAverage(EqualsPlusTime, duration.count());
+
             sigma = sigmaNew;
         }
 
         applyPressureMulti();
+    }
+
+    void SORproject() {
+        std::fill(begin(this->p), end(this->p), 0.f);
+
+        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
+        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
+
+        std::fill(begin(pressure), end(pressure), 0.f);
+
+        for (int iter = 0; iter < numPressureIters; ++iter) {
+            for (int i = 1; i < this->numX - 1; ++i) {
+                for (int j = 1; j < this->numY - 1; ++j) {
+                    if (this->cellType[i * n + j] != FLUID_CELL) continue;
+
+                    float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
+                    float rightType = cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
+                    float topType = cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
+                    float bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
+
+                    float divideBy = leftType + rightType + topType + bottomType;
+                    if (divideBy == 0.f) continue;
+
+                    float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
+
+                    if (this->particleRestDensity > 0.f) {
+                        float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
+                        if (compression > 0.f) {
+                            divergence -= k * compression;
+                        }
+                    }
+
+                    float p = divergence / divideBy;
+                    p *= overRelaxation;
+
+                    this->u[i * n + j] += leftType * p;
+                    this->u[(i + 1) * n + j] -= rightType * p;
+                    this->v[i * n + j] += topType * p;
+                    this->v[i * n + j + 1] -= bottomType * p;
+                }
+            }
+        }
     }
 
     float curl(int i, int j) {
@@ -2107,19 +2174,20 @@ public:
     }
 
     void update(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
+        auto start = std::chrono::high_resolution_clock::now();
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
         if (!stop || step) {
-            auto start = std::chrono::high_resolution_clock::now();
             this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
-            auto end = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-            addValueToAverage(SimStepTime, duration.count());
             step = false;
         }
 
         this->render(window);
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        addValueToAverage(SimStepTime, duration.count());
     }
 
     void simulate(float dt_, bool leftMouseDown_, bool rightMouseDown_, bool justPressed) {
@@ -2132,6 +2200,8 @@ public:
             // 3) updateDensity -- Same idea as to grid
 
         // collision, rendering, and to particles all great
+        auto start = std::chrono::high_resolution_clock::now();
+
         dt = dt_;
 
         this->integrateMulti();
@@ -2139,15 +2209,27 @@ public:
         if (fireActive) {
             std::fill(begin(collisions), end(collisions), 0);
         }
-
-        auto start = std::chrono::high_resolution_clock::now();
-
-        addObjectsToGrids();
-
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
+        addValueToAverage(miscellaneousTime, duration.count());
+
+
+
+
+
+        start = std::chrono::high_resolution_clock::now();
+
+        addObjectsToGrids();
+
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
         addValueToAverage(FillGridTime, duration.count());
+
+
+
+
 
         start = std::chrono::high_resolution_clock::now();
         leftMouseDown = leftMouseDown_;
@@ -2178,6 +2260,7 @@ public:
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         addValueToAverage(miscellaneousTime, duration.count());
+
 
 
 
@@ -2227,7 +2310,7 @@ public:
 
 
 
-
+        start = std::chrono::high_resolution_clock::now();
         if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
@@ -2236,10 +2319,14 @@ public:
         if (vorticityStrength > 0) {
             this->applyVorticityConfinementRedBlack();
         }
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
+        addValueToAverage(miscellaneousTime, duration.count());
 
         start = std::chrono::high_resolution_clock::now();
         this->PCGproject();
+        //this->SORproject();
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -2347,6 +2434,22 @@ public:
 
     float getRenderingTime() {
         return RenderingTime;
+    }
+
+    float getEqualsPlusTime() {
+        return this->EqualsPlusTime;
+    }
+
+    float getDotTime() {
+        return this->DotTime;
+    }
+
+    float getScaledAddTime() {
+        return this->scaledAddTime;
+    }
+
+    float getPreconditionTime() {
+        return this->preconditioningTime;
     }
 
     void addToForceObjectRadius(float add) {
