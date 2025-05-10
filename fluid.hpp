@@ -90,12 +90,6 @@ class Fluid {
     // lightning mcqueen: {255, 0, 0}, {255, 69, 0}, {255, 165, 0}, {255, 255, 0}
     // rainbow: {255, 0, 0}, {255, 255, 0}, {0, 255, 0}, {0, 200, 255} 
 
-    sf::VertexArray va{sf::PrimitiveType::Quads};
-
-    sf::Texture texture;
-
-    sf::RenderStates states;
-
     float k;
 
     float timeForTransfer;
@@ -127,23 +121,12 @@ class Fluid {
     float textureSizeX;
     float textureSizeY;
 
-    // see if radius / 2.36 works
+    float obstacleTextureSizeX;
+    float obstacleTextureSizeY;
+
     float separationInit;
 
     float vorticityStrength;
-
-    std::vector<float> confinementForce;
-
-    std::vector<float> vorticity;
-    std::vector<float> vorticityMag;
-
-    // any variables or methods commented out are for constant memory spatial hasing 
-    /*int tableSize;
-    int numObjects;
-    std::vector<int> cellCount;
-    std::vector<int> particleArray;
-    std::vector<int> allHashCells;
-    float spacing;*/
 
     float flipRatio;
     float overRelaxation;
@@ -161,13 +144,13 @@ class Fluid {
 
     std::vector<float> temperatures;
     // how quickly the ground transfers heat to the particles
-    float groundConductivity = 100.f; // 30
+    float groundConductivity = 100.f;
     // how quickly particles transfer heat between themselves
-    float interConductivity = 25.f;  // 15
+    float interConductivity = 25.f;
     // how quickly particles accelerate upwards due to heat
-    float fireStrength = 75.f;      // 100
-    // how quickly heated particles lose that heat
-    float tempDiffusion = 0.1f;      // 0.1
+    float fireStrength = 75.f;
+    // how quickly particles lose heat
+    float tempDiffusion = 0.1f;
 
     int32_t renderPattern = 0;
 
@@ -175,11 +158,8 @@ class Fluid {
 
     std::vector<uint32_t> collisions;
 
-    std::vector<double> direction;
     std::vector<double> residual;
     std::vector<double> pressure;
-    std::vector<double> Ad;
-
     std::vector<double> Adiag;
     std::vector<double> si;
     std::vector<double> li;
@@ -211,7 +191,21 @@ class Fluid {
 
     //sf::CircleShape circleDrawer;
 
+    sf::VertexArray va{sf::PrimitiveType::Quads};
+
+    sf::Texture texture;
+
+    sf::RenderStates states;
+
     std::vector<sf::Vertex> vaCopy;
+
+
+    std::vector<sf::Vector2i> obstaclePositions;
+    sf::VertexArray obstacleVa{sf::PrimitiveType::Quads};
+
+    sf::Texture obstacleTexture;
+
+    sf::RenderStates obstacleStates;
 
     sf::RectangleShape pencil;
 
@@ -249,6 +243,8 @@ public:
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
 
+            n = this->numY;
+
             this->cellSpacing = std::max(WIDTH / numX, HEIGHT / numY);
             this->invSpacing = 1.f / this->cellSpacing;
 
@@ -278,12 +274,8 @@ public:
             this->precon.resize(numX * numY);
             this->z.resize(numX * numY);
             this->search.resize(numX * numY);
-
-            this->direction.resize(numX * numY);
             this->residual.resize(numX * numY);
             this->pressure.resize(numX * numY);
-            this->residual.resize(numX * numY);
-            this->Ad.resize(numX * numY);
 
             this->collisions.resize(numParticles);
             this->temperatures.resize(numParticles);
@@ -312,6 +304,7 @@ public:
             this->particleDensity.resize(numCells);
             this->particleColors.resize(3 * numParticles);
             std::fill(begin(particleColors), end(particleColors), 0);
+
             this->va.resize(numParticles * 4);
             this->vaCopy.resize(numParticles * 4);
             texture.loadFromFile("white_circle.png");
@@ -333,6 +326,33 @@ public:
 
             textureSizeX = texture_size.x;
             textureSizeY = texture_size.y;
+
+            size_t numObstacles = 2 * numX + 2 * (numY - 2);
+            this->obstacleVa.resize(4 * numObstacles);
+            this->obstaclePositions.resize(numObstacles);
+
+            sf::Color gray = sf::Color(150, 150, 150);
+
+            obstacleTexture.loadFromFile("gray_square.png");
+            obstacleTexture.generateMipmap();
+            auto const obstacle_texture_size = static_cast<sf::Vector2f>(obstacleTexture.getSize());
+            for (int index = 0; index < numObstacles; ++index) {
+                int i = 4 * index;
+                obstacleVa[i].texCoords = {0.f, 0.f};
+                obstacleVa[i + 1].texCoords = {obstacle_texture_size.x, 0.f};
+                obstacleVa[i + 2].texCoords = {obstacle_texture_size.x, obstacle_texture_size.y};
+                obstacleVa[i + 3].texCoords = {0.f, obstacle_texture_size.y};
+
+                obstacleVa[i].color = gray;
+                obstacleVa[i + 1].color = gray;
+                obstacleVa[i + 2].color = gray;
+                obstacleVa[i + 3].color = gray;
+            }
+            obstacleStates.texture = &obstacleTexture;
+
+            obstacleTextureSizeX = obstacle_texture_size.x;
+            obstacleTextureSizeY = obstacle_texture_size.y;
+
 
             this->scalingFactor = 2 * radius;
 
@@ -376,14 +396,67 @@ public:
                     offset = !offset;
                 }
             }
-
-            n = this->numY;
+            
+            int idx = 0;
             for (int i = 0; i < this->numX; ++i) {
-                for (int j = 0; j < this->numY; ++j) {
-                    if (i == 0 || j == 0 || i == this->numX - 1 || j == this->numY - 1) {
-                        this->cellType[i * n + j] = SOLID_CELL;
-                    }
-                }
+                this->cellType[i * n] = SOLID_CELL;
+                obstaclePositions[idx] = sf::Vector2i{i, 0};
+
+                auto pos = gridCellToPos(i * n);
+                float px = pos.x;
+                float py = pos.y;
+                size_t vaIdx = 4 * idx;
+                obstacleVa[vaIdx].position = {px - halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 1].position = {px + halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 2].position = {px + halfSpacing, py + halfSpacing};
+                obstacleVa[vaIdx + 3].position = {px - halfSpacing, py + halfSpacing};
+
+                ++idx;
+            }
+            for (int i = 0; i < this->numX; ++i) {
+                this->cellType[i * n + numY - 1] = SOLID_CELL;
+                obstaclePositions[idx] = sf::Vector2i{i, numY - 1};
+
+                auto pos = gridCellToPos(i * n + numY - 1);
+                float px = pos.x;
+                float py = pos.y;
+                size_t vaIdx = 4 * idx;
+                obstacleVa[vaIdx].position = {px - halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 1].position = {px + halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 2].position = {px + halfSpacing, py + halfSpacing};
+                obstacleVa[vaIdx + 3].position = {px - halfSpacing, py + halfSpacing};
+
+                ++idx;
+            }
+            for (int j = 1; j < this->numY - 1; ++j) {
+                this->cellType[j] = SOLID_CELL;
+                obstaclePositions[idx] = sf::Vector2i{0, j};
+
+                auto pos = gridCellToPos(j);
+                float px = pos.x;
+                float py = pos.y;
+                size_t vaIdx = 4 * idx;
+                obstacleVa[vaIdx].position = {px - halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 1].position = {px + halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 2].position = {px + halfSpacing, py + halfSpacing};
+                obstacleVa[vaIdx + 3].position = {px - halfSpacing, py + halfSpacing};
+
+                ++idx;
+            }
+            for (int j = 1; j < this->numY - 1; ++j) {
+                this->cellType[(numX - 1) * n + j] = SOLID_CELL;
+                obstaclePositions[idx] = sf::Vector2i{numX - 1, j};
+
+                auto pos = gridCellToPos((numX - 1) * n + j);
+                float px = pos.x;
+                float py = pos.y;
+                size_t vaIdx = 4 * idx;
+                obstacleVa[vaIdx].position = {px - halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 1].position = {px + halfSpacing, py - halfSpacing};
+                obstacleVa[vaIdx + 2].position = {px + halfSpacing, py + halfSpacing};
+                obstacleVa[vaIdx + 3].position = {px - halfSpacing, py + halfSpacing};
+
+                ++idx;
             }
 
             this->moveDist = 2 * radius;
@@ -405,14 +478,14 @@ public:
             this->forceObjectDrawer.setFillColor(sf::Color::Transparent);
             this->forceObjectDrawer.setOutlineColor(sf::Color::Red); 
             this->checkForceObjectseparationDist = (this->radius + forceObjectRadius) * (this->radius + forceObjectRadius);
-
+            
             this->generatorDrawer.setOrigin(generatorRadius, generatorRadius);
             this->generatorDrawer.setSize(sf::Vector2f(2 * generatorRadius, 2 * generatorRadius));
             this->generatorDrawer.setOutlineThickness(1.f);
             this->generatorDrawer.setFillColor(sf::Color::Transparent);
             this->generatorDrawer.setOutlineColor(sf::Color::Red); 
 
-            // linearly interpolate between the values in colorMap to create a gradient array 
+            // lerp between the values in colorMap to create a gradient array 
             float num_colors = velColorMap.size() - 1; // number of colors - 1
             float num_steps = 1.f * velGradient.size() / num_colors; //num_steps = 50 * key_range
             int index = 0;
@@ -438,13 +511,27 @@ public:
                     index++;
                 }
             }
-
-            /*this->spacing = 2 * this->radius;
-            this->tableSize = 2 * numParticles;
-            this->cellCount.resize(this->tableSize + 1);
-            this->particleArray.resize(numParticles);
-            this->allHashCells.resize(numParticles);*/
+            
     }
+
+    sf::Vector2f gridCellToPos(int idx) {
+        int i = idx % n;
+        int j = idx / n;
+        float x = halfSpacing + (j * cellSpacing);
+        float y = halfSpacing + (i * cellSpacing);
+        return sf::Vector2f{x, y};
+    }
+
+    template <typename T>
+    int find(std::vector<T> *arr, T find) {
+        size_t len = arr->size();
+        for (int i = 0; i < len; ++i) {
+            if ((*arr)[i] == find) {
+                return i;
+            }
+        }
+        return -1;
+    } 
 
     void drawCells(sf::RenderWindow& window) {
         for (int i = 0; i < numX; ++i) {
@@ -531,7 +618,6 @@ public:
                 int32_t gridY = y / scalingFactor;
                 collisionGrid.addAtom(gridX, gridY, i);
                 
-                // THIS SHIT IS TAKING A LONG FUCKING TIME
                 int32_t cellOccupantsX = x / cellSpacing;
                 int32_t cellOccupantsY = y / cellSpacing;
                 cellOccupantsGrid.addAtom(cellOccupantsX, cellOccupantsY, i);
@@ -801,28 +887,97 @@ public:
         int localX = static_cast<int>(mouseX / cellSpacing);
         int localY = static_cast<int>(mouseY / cellSpacing);
 
+        int numObstacles = obstaclePositions.size();
+
+        int numPotentialAddedObstacles = ((2 * pencilRadius + 1) * (2 * pencilRadius + 1));
+        obstaclePositions.resize(numObstacles + numPotentialAddedObstacles);
+
+        int numAddedObstacles = 0;
         for (int i = -pencilRadius; i <= pencilRadius; ++i) {
             for (int j = -pencilRadius; j <= pencilRadius; ++j) {
-                int idx = (localX + i) * numY + localY + j;
-                if (cellType[idx] != SOLID_CELL && localX + i % numX > 0 && localY + j > 0 && localX + i % numX < numX - 1 && localY + j < numY - 1) {
-                    cellType[idx] = SOLID_CELL;
+                int x = localX + i;
+                int y = localY + j;
+
+                if (x % numX > 0 && y > 0 && x % numX < numX - 1 && y < numY - 1) {
+
+                    int idx = x * numY + y;
+
+                    if (cellType[idx] != SOLID_CELL) {
+                        cellType[idx] = SOLID_CELL;
+                        obstaclePositions[numObstacles + numAddedObstacles] = sf::Vector2i{x, y};
+                        numAddedObstacles++;
+                    }
                 }
             }
         }
+
+        obstaclePositions.resize(numObstacles + numAddedObstacles);
+
+        if (numAddedObstacles > 0) {
+            obstacleVa.resize(4 * (numObstacles + numAddedObstacles));
+
+            sf::Color gray = sf::Color(150, 150, 150);
+            for (int i = 0; i < numAddedObstacles; ++i) {
+                int idx = 4 * (i + numObstacles);
+                obstacleVa[idx].texCoords = {0.f, 0.f};
+                obstacleVa[idx + 1].texCoords = {textureSizeX, 0.f};
+                obstacleVa[idx + 2].texCoords = {textureSizeX, textureSizeY};
+                obstacleVa[idx + 3].texCoords = {0.f, textureSizeY};
+
+                obstacleVa[idx].color = gray;
+                obstacleVa[idx + 1].color = gray;
+                obstacleVa[idx + 2].color = gray;
+                obstacleVa[idx + 3].color = gray;
+
+                auto cellCoords = obstaclePositions[numObstacles + i];
+                auto pos = gridCellToPos(cellCoords.x * n + cellCoords.y);
+                float px = pos.x;
+                float py = pos.y;
+
+                obstacleVa[idx].position = {px - halfSpacing, py - halfSpacing};
+                obstacleVa[idx + 1].position = {px + halfSpacing, py - halfSpacing};
+                obstacleVa[idx + 2].position = {px + halfSpacing, py + halfSpacing};
+                obstacleVa[idx + 3].position = {px - halfSpacing, py + halfSpacing};
+            }
+        }    
     }
 
     void eraseSolids() {
         int localX = static_cast<int>(mouseX / cellSpacing);
         int localY = static_cast<int>(mouseY / cellSpacing);
 
+        int numObstacles = obstaclePositions.size();
+        int numFreedCells = 0;
         for (int i = -pencilRadius; i <= pencilRadius; ++i) {
             for (int j = -pencilRadius; j <= pencilRadius; ++j) {
-                int idx = (localX + i) * numY + localY + j;
-                if (cellType[idx] == SOLID_CELL && localX + i % numX > 0 && localY + j > 0 && localX + i % numX < numX - 1 && localY + j < numY - 1) {
+                int x = localX + i;
+                int y = localY + j;
+
+                int idx = x * n + y;
+                if (cellType[idx] == SOLID_CELL && x > 0 && y > 0 && x < numX - 1 && y < numY - 1) {
                     cellType[idx] = AIR_CELL;
+                    // find the index of obstacleSet with the position we want to remove
+                    // replace that index with the [numObstacles - (numFreedCells + 1)] index of obstacleSet
+                    // then just resize the obstacleSet and obstacleVa after this double loop
+                    numFreedCells++;
+
+                    int obstacleIdx = find(&obstaclePositions, sf::Vector2i{x, y});
+                    int vaIdx = 4 * obstacleIdx;
+
+                    int posMv = numObstacles - numFreedCells;
+                    int vaMv = 4 * posMv;
+
+                    obstaclePositions[obstacleIdx] = obstaclePositions[posMv];
+
+                    obstacleVa[vaIdx].position = obstacleVa[vaMv].position;
+                    obstacleVa[vaIdx + 1].position = obstacleVa[vaMv + 1].position;
+                    obstacleVa[vaIdx + 2].position = obstacleVa[vaMv + 2].position;
+                    obstacleVa[vaIdx + 3].position = obstacleVa[vaMv + 3].position;
                 }
             }
         }
+        obstacleVa.resize(4 * (numObstacles - numFreedCells));
+        obstaclePositions.resize(numObstacles - numFreedCells);
     }
 
     void cacheTransferNodes(int32_t start, int32_t end, float halfHeight, int32_t component) {
@@ -2095,7 +2250,7 @@ public:
 
             float temp = temperatures[index];
 
-            if (temp < 30 and fireActive) {
+            if (temp < 30 && fireActive) {
                 temp = 0.f;
             }
 
@@ -2165,6 +2320,10 @@ public:
         thread_pool.waitForCompletion();
     }
 
+    void drawObstacles(sf::RenderWindow& window) {
+        window.draw(obstacleVa, obstacleStates);
+    }
+
     void drawParticlesVertex(sf::RenderWindow& window) {
         window.draw(va, states);
     }
@@ -2178,6 +2337,7 @@ public:
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
+        
         if (!stop || step) {
             this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
             step = false;
@@ -2191,7 +2351,6 @@ public:
     }
 
     void simulate(float dt_, bool leftMouseDown_, bool rightMouseDown_, bool justPressed) {
-
         ++steps;
 
         // order of need of implementation/optimization:
@@ -2214,8 +2373,7 @@ public:
 
         addValueToAverage(miscellaneousTime, duration.count());
 
-
-
+        //std::cout << obstaclePositions.size() << ", " << obstacleVa.getVertexCount() << "\n";
 
 
         start = std::chrono::high_resolution_clock::now();
@@ -2227,8 +2385,7 @@ public:
 
         addValueToAverage(FillGridTime, duration.count());
 
-
-
+        
 
 
         start = std::chrono::high_resolution_clock::now();
@@ -2262,7 +2419,7 @@ public:
         addValueToAverage(miscellaneousTime, duration.count());
 
 
-
+        
 
 
         start = std::chrono::high_resolution_clock::now();
@@ -2325,8 +2482,8 @@ public:
         addValueToAverage(miscellaneousTime, duration.count());
 
         start = std::chrono::high_resolution_clock::now();
-        this->PCGproject();
-        //this->SORproject();
+        //this->PCGproject();
+        this->SORproject();
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -2345,7 +2502,7 @@ public:
 
     void render(sf::RenderWindow& window) {
         auto start = std::chrono::high_resolution_clock::now();
-        this->drawCells(window);
+        //this->drawCells(window);
 
         if (renderPattern == 0) {
             this->drawDiffusionMulti();
@@ -2362,10 +2519,11 @@ public:
         else if (renderPattern == 3) {
             this->drawTemperatureMulti();
         }
-
         else if (renderPattern == 4) {
             this->DrawDivergences(window);
         }
+
+        this->drawObstacles(window);
 
         if (renderPattern != 4) {
             this->drawParticlesVertex(window);
