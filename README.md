@@ -24,8 +24,7 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 ![Screenshot 2025-03-26 005615](https://github.com/user-attachments/assets/988be616-f1b5-483a-9f0e-76a55853a383)
 
 Improvements to be made:
--  optimize PCG code
--  complete multithreading
+-  implement Multigrid, and then MGPCG
 -  better collision resolution with scene objects
--  more accurate volume correction
+-  more accurate divergence/volume correction
 -  Better boundary conditions
