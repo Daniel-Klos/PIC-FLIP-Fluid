@@ -25,6 +25,8 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 
 Improvements to be made:
 -  implement Multigrid, and then MGPCG
+    - implement efficient Red-Black Gauss Seidel and Dampened Jacobi
 -  better collision resolution with scene objects
+    - implement level sets instead of using SDFs
 -  more accurate divergence/volume correction
 -  Better boundary conditions
