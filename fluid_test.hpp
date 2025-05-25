@@ -11,7 +11,7 @@
 #include "pressure_solver.hpp"
 #include "rendering.hpp"
 
-class Fluid {
+class FluidHandler {
     int FLUID_CELL;
     int AIR_CELL;
     int SOLID_CELL;
@@ -73,9 +73,6 @@ class Fluid {
     float obstacleTextureSizeX;
     float obstacleTextureSizeY;
 
-    float vorticityStrength;
-
-    float flipRatio;
     float overRelaxation;
     float numPressureIters;
 
@@ -105,9 +102,6 @@ class Fluid {
     std::vector<double> search;
 
     sf::RectangleShape cellDrawer;
-
-    bool stop = false;
-    bool step = false;
 
     uint32_t numThreads;
     uint32_t particlesPerThread;
@@ -159,8 +153,7 @@ class Fluid {
     FluidRenderer &fluid_renderer;
 
 public:
-    Fluid(float k, float diffusionRatio, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, FluidState& fas, PressureSolver& ps, FluidRenderer& fr)
-        : k(k), diffusionRatio(diffusionRatio), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), fluid_attributes(fas), pressure_solver(ps), fluid_renderer(fr) {
+    FluidHandler(float k, float overRelaxation_, float numPressureIters_, FluidState& fas, PressureSolver& ps, FluidRenderer& fr): k(k), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), fluid_attributes(fas), pressure_solver(ps), fluid_renderer(fr) {
 
             /*font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
@@ -467,6 +460,8 @@ public:
 
             collisions[index]++;
             collisions[otherIndex]++;
+
+
         }
     }
 
@@ -955,7 +950,7 @@ public:
 
                 corr = (valid0u * d0_u * (fluid_attributes.u[nr0_u] - fluid_attributes.prevU[nr0_u]) + valid1u * d1_u * (fluid_attributes.u[nr1_u] - fluid_attributes.prevU[nr1_u]) + valid2u * d2_u * (fluid_attributes.u[nr2_u] - fluid_attributes.prevU[nr2_u]) + valid3u * d3_u * (fluid_attributes.u[nr3_u] - fluid_attributes.prevU[nr3_u])) / divX;
                 flipV = pvx + corr;
-                fluid_attributes.velocities[ui] = (1.f - flipRatio) * picV + flipRatio * flipV;
+                fluid_attributes.velocities[ui] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
             }
 
             if (divY > 0.f) {
@@ -963,7 +958,7 @@ public:
 
                 corr = (valid0v * d0_v * (fluid_attributes.v[nr0_v] - fluid_attributes.prevV[nr0_v]) + valid1v * d1_v * (fluid_attributes.v[nr1_v] - fluid_attributes.prevV[nr1_v]) + valid2v * d2_v * (fluid_attributes.v[nr2_v] - fluid_attributes.prevV[nr2_v]) + valid3v * d3_v * (fluid_attributes.v[nr3_v] - fluid_attributes.prevV[nr3_v])) / divY;
                 flipV = pvy + corr;
-                fluid_attributes.velocities[vi] = (1.f - flipRatio) * picV + flipRatio * flipV;
+                fluid_attributes.velocities[vi] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
             }
         }
     }
@@ -1607,8 +1602,8 @@ public:
 
                 const float c = curl(i, j);
 
-                fluid_attributes.v[i * n + j] += c * dx * dt * vorticityStrength;
-                fluid_attributes.u[i * n + j] += c * dy * dt * vorticityStrength;
+                fluid_attributes.v[i * n + j] += c * dx * dt * fluid_attributes.vorticityStrength;
+                fluid_attributes.u[i * n + j] += c * dy * dt * fluid_attributes.vorticityStrength;
             }
         }
     }
@@ -1691,45 +1686,53 @@ public:
     }
 
     void generate() {
-        float separation = 2.1;
-        int wideNum = std::floor((2 * generatorRadius) / (radius * separation));
+        float separation = radius * 2.1;
+        int wideNum = std::floor((2 * generatorRadius) / (separation));
         int highNum = wideNum;
-        int numAdded = wideNum * highNum;
+        int numPotentiallyAdded = wideNum * highNum;
 
-        float starting_px = mouseX - generatorRadius + radius;
-        float starting_py = mouseY - generatorRadius + radius;
+        float generatorRightBound = mouseX + generatorRadius;
+        float generatorBottomBound = mouseY + generatorRadius;
+
+        float starting_px = std::max(mouseX - generatorRadius + radius, fluid_attributes.cellSpacing + radius);
+        float starting_py = std::max(mouseY - generatorRadius + radius, fluid_attributes.cellSpacing + radius);
         float px = starting_px;
         float py = starting_py;
         bool offset = true;
 
-        std::vector<float> addToPositions;
+        fluid_attributes.positions.resize(2 * fluid_attributes.num_particles + 2 * numPotentiallyAdded);
+        int addedTo = 0;
 
-        for (int i = 0; i < numAdded; ++i) {
+        for (int i = 0; i < numPotentiallyAdded; ++i) {
+            float prevPx = px;
+            float prevPy = py;
+            if (prevPy > generatorBottomBound || prevPy + radius > fluid_attributes.HEIGHT - fluid_attributes.cellSpacing) {
+                break;
+            }
+
             int cellX = px / fluid_attributes.cellSpacing;
             int cellY = py / fluid_attributes.cellSpacing;
             int cellNr = cellX * n + cellY;
-            float prevPx = px;
-            float prevPy = py;
 
-            px += radius * separation;
-            if ((i + 1) % wideNum == 0) {
+            px += separation;
+            if (px > generatorRightBound) {
                 px = starting_px;
-                if (offset) {
-                    px += radius * separation;
-                }
-                py += radius * separation;
+                /*if (offset) {
+                    px += 0.5 * separation;
+                }*/
+                py += separation;
                 offset = !offset;
             }
 
-            if (fluid_attributes.cellType[cellNr] != AIR_CELL || px - radius < 0 || px + radius > fluid_attributes.WIDTH || py - radius < 0 || py + radius > fluid_attributes.HEIGHT) {
+            if (fluid_attributes.cellType[cellNr] != AIR_CELL || prevPx - radius < fluid_attributes.cellSpacing || prevPx + radius > fluid_attributes.WIDTH - fluid_attributes.cellSpacing || prevPy - radius < fluid_attributes.cellSpacing) {
                 continue;
             }
 
-            addToPositions.push_back(prevPx);
-            addToPositions.push_back(prevPy);
-        }
+            fluid_attributes.positions[2 * (fluid_attributes.num_particles + addedTo)] = prevPx;
+            fluid_attributes.positions[2 * (fluid_attributes.num_particles + addedTo) + 1] = prevPy;
 
-        int addedTo = addToPositions.size() / 2;
+            addedTo++;
+        }
 
         fluid_attributes.num_particles += addedTo;
 
@@ -1746,9 +1749,6 @@ public:
             int idx3 = 4 * i;
             int idx4 = i - start;
 
-            fluid_attributes.positions[idx1] = addToPositions[idx4 * 2];
-            fluid_attributes.positions[idx1 + 1] = addToPositions[idx4 * 2 + 1];
-            
             fluid_attributes.velocities[idx1] = 0.f;
             fluid_attributes.velocities[idx1 + 1] = 0.f;
 
@@ -1846,7 +1846,7 @@ public:
         fluid_renderer.vaCopy.resize(4 * fluid_attributes.num_particles);
     
         fluid_renderer.va.resize(4 * fluid_attributes.num_particles);
-        for (int i = 0; i < fluid_renderer.va.getVertexCount(); ++i) {
+        for (int i = 0; i < vaSize; ++i) {
             fluid_renderer.va[i] = fluid_renderer.vaCopy[i];
         }
     
@@ -1952,9 +1952,9 @@ public:
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
         
-        if (!stop || step) {
+        if (!fluid_attributes.stop || fluid_attributes.step) {
             this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
-            step = false;
+            fluid_attributes.step = false;
         }
 
         this->render(window);
@@ -2093,7 +2093,7 @@ public:
         }
 
 
-        if (vorticityStrength > 0) {
+        if (fluid_attributes.vorticityStrength != 0) {
             this->applyVorticityConfinementRedBlack();
         }
         
@@ -2280,27 +2280,11 @@ public:
         return this->k;
     }
 
-    void addToVorticityStrength(float add) {
-        this->vorticityStrength += add;
-    }
-
-    float getVorticityStrength() {
-        return this->vorticityStrength;
-    }
-
     void setNextRenderPattern() {
         this->renderPattern++;
         if (this->renderPattern > 4) {
             this->renderPattern = 0;
         }
-    }
-
-    float getFlipRatio() {
-        return this->flipRatio;
-    }
-
-    void addToFlipRatio(const float add) {
-        this->flipRatio += add;
     }
 
     void setForceObjectActive(bool active) {
@@ -2337,22 +2321,6 @@ public:
 
     int getNumY() {
         return this->numY;
-    }
-
-    bool getStop() {
-        return this->stop;
-    }
-
-    void setStop(bool set) {
-        this->stop = set;
-    }
-
-    bool getStep() {
-        return this->step;
-    }
-
-    void setStep(bool set) {
-        this->step = set;
     }
 
     void setSolidDrawer(bool set) {
