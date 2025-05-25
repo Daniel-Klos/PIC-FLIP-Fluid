@@ -1,15 +1,11 @@
 #include <SFML/Graphics.hpp>
 #include <iostream>
-#include <cmath>
-#include <vector>
-#include <algorithm>
-#include <random>
-#include <array>
 #include <sstream>
 #include <iomanip>
-#include <thread>
 
-#include "fluid.hpp"
+#include "fluid_test.hpp"
+#include "fluid_state.hpp"
+#include "rendering.hpp"
 
 void addValueToAverage(float& value, float newValue, int steps) {
     value += (newValue - value) / steps;
@@ -39,7 +35,6 @@ int main()
     int numPressureIters = 50; 
     float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;
-    float seperationInit = 2.7f;
     float vorticityStrength = 10.5f;//19.5f; */
 
     // space
@@ -51,7 +46,6 @@ int main()
     int numPressureIters = 30; 
     float diffusionRatio = 0.8f;
     float flipRatio = 0.8f;
-    float seperationInit = 2.7f;
     float vorticityStrength = 4.f;*/
 
     // lots
@@ -63,7 +57,6 @@ int main()
     int32_t numPressureIters = 30; 
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.9f;
-    float seperationInit = 2.4f;
     float vorticityStrength = 0.f;*/
 
     // fire
@@ -75,7 +68,6 @@ int main()
     int32_t numPressureIters = 30; // 30 
     float diffusionRatio = 0.85f; 
     float flipRatio = 0.9f;
-    float seperationInit = 4.13f; 
     float vorticityStrength = 5.f;//19.5f; */
 
     // grid test
@@ -87,7 +79,6 @@ int main()
     int32_t numPressureIters = 7; // 30 
     float diffusionRatio = 0.85f; 
     float flipRatio = 0.9f;
-    float seperationInit = 1.9f; // 1.9 for 100, 2.4 for 80
     float vorticityStrength = 5.f;//19.5f; */
 
     // a lot
@@ -95,23 +86,21 @@ int main()
     float gravityX = 4500.f; 
     float gravityY = 0.f;
     float divergenceModifier = 100.f;
-    float gridSize = 85.f; 
-    int numPressureIters = 1;
+    float gridSize = 200.f; // 85
+    int numPressureIters = 10;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;
-    float seperationInit = 2.f;
     float vorticityStrength = 0.f;*/
 
     // put laptop on performance mode
     /*int numParticles = 35000; 
     float gravityX = 5500.f; // 4500
     float gravityY = 0.f;
-    float divergenceModifier = 100.f;
+    float divergenceModifier = 20.f;
     float gridSize = 90.f; 
-    int numPressureIters = 1;
+    int numPressureIters = 15;
     float diffusionRatio = 0.9f; 
-    float flipRatio = 0.80f;
-    float seperationInit = 2.15f;
+    float flipRatio = 0.90f;
     float vorticityStrength = 0.f;*/
 
     // vorticity testing
@@ -123,7 +112,6 @@ int main()
     int numPressureIters = 30;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;
-    float seperationInit = 2.75f;
     float vorticityStrength = 2.f;*/
 
     // fire mode
@@ -135,7 +123,6 @@ int main()
     int numPressureIters = 30;
     float diffusionRatio = 0.9f; 
     float flipRatio = 0.80f;
-    float seperationInit = 3.9f;
     float vorticityStrength = 2.f;*/
 
     // fire hazard 
@@ -146,20 +133,18 @@ int main()
     int numPressureIters = 25; 
     float diffusionRatio = 1.05f; 
     float flipRatio = 0.9f;
-    float seperationInit = 1.95f;
     float vorticityStrength = 2.f;*/
 
     // casual
-    int32_t numParticles = 15000; 
+    /*int32_t numParticles = 15000; 
     float gravityX = 5500.f; // 5500
     float gravityY = 0.f;
-    float divergenceModifier = 5.f; //5, 10
-    float gridSize = 70.f; 
-    int32_t numPressureIters = 8; // 8, 20
+    float divergenceModifier = 10.f; //5, 10
+    float gridNumX = 135.f; 
+    int32_t numPressureIters = 30; // 8, 20
     float diffusionRatio = 0.85f; // 0.85
     float flipRatio = 0.9f;
-    float seperationInit = 2.7f; // 2.7
-    float vorticityStrength = 0.f;// 400
+    float vorticityStrength = 0.f;// 400*/
 
     // grid testing
     /*int numParticles = 100; 
@@ -170,41 +155,31 @@ int main()
     int numPressureIters = 1; 
     float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;
-    float seperationInit = 4.5f; // 3.5 for 50, 4.5 for 40
     float vorticityStrength = 0.f;*/
 
     // low
-    /*int numParticles = 5000; 
+    int numParticles = 5000; 
     float gravityX = 5500.f; // 5500
     float gravityY = 0.f;
-    float divergenceModifier = 4.f; // 8 
-    float gridSize = 50.f; 
-    int numPressureIters = 7; // 40 
+    float divergenceModifier = 8.f; // 8 
+    float gridNumX = 125.f; 
+    int numPressureIters = 30; // 40 
     float diffusionRatio = 0.75f; 
     float flipRatio = 0.8f;
-    float seperationInit = 3.5f; // 3.5 for 50, 4.5 for 40
-    float vorticityStrength = 0.f;*/
+    float vorticityStrength = 0.f;
 
-    // low
-    /*int numParticles = 7000; 
-    float gravityX = 5500.f5
+    // tiny
+    /*int numParticles = 700; 
+    float gravityX = 5500.f;
     float gravityY = 0.f; // 5500
     float divergenceModifier = 6.5f; 
-    float gridSize = 50.f; 
+    float gridNumX = 50.f; 
     int numPressureIters = 20; 
     float diffusionRatio = 0.95f; 
     float flipRatio = 0.9f;
-    float seperationInit = 3.5f; // 3.5 for 50, 4.5 for 40
     float vorticityStrength = 19.5f; */
 
     // -------------------------------------------
-
-    // for fullscreen
-    /*sf::VideoMode desktopMode = sf::VideoMode::getDesktopMode();
-    int WIDTH = desktopMode.width;
-    int HEIGHT = desktopMode.height;*/
-
-    sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "FLIP Simulation");
 
     sf::Font font;
     font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
@@ -213,34 +188,6 @@ int main()
     text.setFont(font);
     text.setPosition(10, 10);
     text.setFillColor(sf::Color::White);
-
-    sf::Clock deltaClock;
-
-    //window.setFramerateLimit(120); // 120
-    //window.setMouseCursorVisible(false);
-
-    int frame = 0;
-    int fps = 0;
-
-    float interactionRadius = 100.f;
-
-    float interactionStrength;
-
-    bool leftMouseDown = false;
-    bool rightMouseDown = false;
-
-    const uint32_t maxThreads = std::thread::hardware_concurrency();
-
-    const uint32_t numThreads = std::min(static_cast<uint32_t>(11), maxThreads); // 11
-
-    tp::ThreadPool thread_pool(numThreads);
-
-    const float overRelaxation = 1.9f; // 1.9
-
-    Fluid fluid = Fluid(WIDTH, HEIGHT, 1.f * HEIGHT / gridSize, numParticles, gravityX, gravityY, divergenceModifier, diffusionRatio, seperationInit, vorticityStrength, flipRatio, overRelaxation, numPressureIters, thread_pool);  //50
-
-    bool justPressed = false;
-
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << flipRatio; 
@@ -260,6 +207,40 @@ int main()
     std::ostringstream oss6;
     oss6 << std::fixed << std::setprecision(0) << gravityY; 
 
+    sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "FLIP Simulation");
+
+    sf::Clock deltaClock;
+
+    window.setFramerateLimit(120); // 120
+
+    int frame = 0;
+    int fps = 0;
+
+    float interactionRadius = 100.f;
+
+    float interactionStrength;
+
+    bool leftMouseDown = false;
+    bool rightMouseDown = false;
+
+    const uint32_t maxThreads = std::thread::hardware_concurrency();
+
+    const uint32_t numThreads = std::min(static_cast<uint32_t>(1), maxThreads); // 11
+
+    tp::ThreadPool thread_pool(numThreads);
+
+    const float overRelaxation = 1.9f; // 1.9
+
+    FluidState fluid_attributes = FluidState(numParticles, WIDTH, HEIGHT, gridNumX, vorticityStrength, flipRatio, gravityX, gravityY, thread_pool);
+
+    PressureSolver pressure_solver = PressureSolver(fluid_attributes, 30);
+
+    FluidRenderer fluid_renderer = FluidRenderer(fluid_attributes, window);
+
+    FluidHandler fluid = FluidHandler(divergenceModifier, overRelaxation, numPressureIters, fluid_attributes, pressure_solver, fluid_renderer);
+
+    bool justPressed = false;
+
     bool forceObjectActive = true; 
 
     float totalDT = 0;
@@ -271,7 +252,7 @@ int main()
     while (window.isOpen())
     {
 
-        auto start = std::chrono::high_resolution_clock::now();
+        //auto start = std::chrono::high_resolution_clock::now();
 
         sf::Time deltaTime = deltaClock.restart();
         float setDT = 1.f / 120.f;
@@ -288,33 +269,33 @@ int main()
             }
             else if (event.type == sf::Event::KeyPressed) {
                 if (event.key.code == sf::Keyboard::B) {
-                    if (fluid.getFlipRatio() < 0.99f) {
-                        fluid.addToFlipRatio(0.01);
+                    if (fluid_attributes.getFlipRatio() < 0.99f) {
+                        fluid_attributes.addToFlipRatio(0.01);
                         oss.str("");  
                         oss.clear();
-                        oss << std::fixed << std::setprecision(2) << fluid.getFlipRatio(); 
+                        oss << std::fixed << std::setprecision(2) << fluid_attributes.getFlipRatio(); 
                     }
                 }
                 else if (event.key.code == sf::Keyboard::S) {
-                    if (fluid.getFlipRatio() > 0.01) {
-                        fluid.addToFlipRatio(-0.01);
+                    if (fluid_attributes.getFlipRatio() > 0.01) {
+                        fluid_attributes.addToFlipRatio(-0.01);
                         oss.str("");  
                         oss.clear();
-                        oss << std::fixed << std::setprecision(2) << fluid.getFlipRatio();
+                        oss << std::fixed << std::setprecision(2) << fluid_attributes.getFlipRatio();
                     }
                 }
                 else if (event.key.code == sf::Keyboard::E) {
-                    fluid.addToVorticityStrength(10);
+                    fluid_attributes.addToVorticityStrength(10);
                     oss4.str("");  
                     oss4.clear();
-                    oss4 << std::fixed << std::setprecision(1) << fluid.getVorticityStrength(); 
+                    oss4 << std::fixed << std::setprecision(1) << fluid_attributes.getVorticityStrength(); 
                 }
                 else if (event.key.code == sf::Keyboard::W) {
-                    if (fluid.getVorticityStrength() - 10 >= 0.f) {
-                        fluid.addToVorticityStrength(-10);
+                    if (fluid_attributes.getVorticityStrength() - 10 >= 0.f) {
+                        fluid_attributes.addToVorticityStrength(-10);
                         oss4.str("");  
                         oss4.clear();
-                        oss4 << std::fixed << std::setprecision(1) << fluid.getVorticityStrength();
+                        oss4 << std::fixed << std::setprecision(1) << fluid_attributes.getVorticityStrength();
                     }
                 }
                 else if (event.key.code == sf::Keyboard::P) {
@@ -400,7 +381,7 @@ int main()
                     fluid.setFireActive(!fluid.getFireActive());
                 }
                 else if (event.key.code == sf::Keyboard::Q) {
-                    std::cout << 
+                    /*std::cout << 
                     "Fill Grid: " << fluid.getFillGridTime() << "\n" <<
                     "Miscellaneous: " << fluid.getMiscellaneousTime() << "\n" <<
                     "Collision: " << fluid.getCollisionTime() << "\n" <<
@@ -413,14 +394,14 @@ int main()
                     "Combined: " << fluid.getCombinedTime() << "\n" <<
                     "Whole Step: " << fluid.getSimStepTime() << "\n" <<
                     "Before Sim Step: " << beforeSimStep << "\n" <<
-                    "After Sim Step: " << afterSimStep << "\n";
+                    "After Sim Step: " << afterSimStep << "\n";*/
                     window.close();
                 }
                 else if (event.key.code == sf::Keyboard::Y) {
-                    fluid.setStop(!fluid.getStop());
+                    fluid_attributes.setStop(!fluid_attributes.getStop());
                 }
                 else if (event.key.code == sf::Keyboard::U) {
-                    fluid.setStep(true);
+                    fluid_attributes.setStep(true);
                 }
             }
             else if (event.type == sf::Event::MouseButtonPressed) {
@@ -466,19 +447,17 @@ int main()
 
         window.clear();
 
-        auto end = std::chrono::high_resolution_clock::now();
+        /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        addValueToAverage(beforeSimStep, duration.count(), numDT);
+        addValueToAverage(beforeSimStep, duration.count(), numDT);*/
 
         //auto start = std::chrono::high_resolution_clock::now();
-
         fluid.update(setDT, window, leftMouseDown, rightMouseDown, justPressed);
-        
         //auto end = std::chrono::high_resolution_clock::now();
         //auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        start = std::chrono::high_resolution_clock::now();
-        if (!fluid.getStop()) {
+        //start = std::chrono::high_resolution_clock::now();
+        if (!fluid_attributes.getStop()) {
             frame++;
             if (frame == 20) {
                 fps = (int)(1.f / trueDT);
@@ -494,7 +473,7 @@ int main()
         window.draw(text);
 
 
-        if (fluid.getStop()) {
+        if (fluid_attributes.getStop()) {
             text.setFillColor(sf::Color::White);
         }
 
@@ -525,9 +504,9 @@ int main()
         window.display();
  
         justPressed = false;
-        end = std::chrono::high_resolution_clock::now();
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        addValueToAverage(afterSimStep, duration.count(), numDT);
+        addValueToAverage(afterSimStep, duration.count(), numDT);*/
        
     }
 
