@@ -29,7 +29,12 @@ struct FluidState {
     float gravityX;
     float gravityY;
 
-    float restDensity;
+    float vorticityStrength;
+    float flipRatio; // move this to TransferGrid struct
+
+    bool stop = false;
+    bool step = false; 
+
     bool fireActive = false;
     std::vector<float> temperatures;
     float groundConductivity = 100.f;  // how quickly the ground transfers heat to the particles
@@ -46,7 +51,7 @@ struct FluidState {
     int particlesPerThread;
     int numMissedParticles;
 
-    FluidState(int num_particles_, float WIDTH_, float HEIGHT_, int numX_, float gravityX_, float gravityY_, tp::ThreadPool &tp): num_particles(num_particles_), WIDTH(WIDTH_), HEIGHT(HEIGHT_), numX(numX_), gravityX(gravityX_), gravityY(gravityY_), thread_pool(tp) {
+    FluidState(int num_particles_, float WIDTH_, float HEIGHT_, int numX_, float vorticityStrength_, float flipRatio_, float gravityX_, float gravityY_, tp::ThreadPool &tp): num_particles(num_particles_), WIDTH(WIDTH_), HEIGHT(HEIGHT_), numX(numX_), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), gravityX(gravityX_), gravityY(gravityY_), thread_pool(tp) {
 
         cellSpacing = WIDTH / numX;
         radius = 0.3 * cellSpacing;
@@ -100,5 +105,37 @@ struct FluidState {
                 offset = !offset;
             }
         }
+    }
+
+    bool getStop() {
+        return this->stop;
+    }
+
+    void setStop(bool set) {
+        this->stop = set;
+    }
+
+    bool getStep() {
+        return this->step;
+    }
+
+    void setStep(bool set) {
+        this->step = set;
+    }
+
+    void addToVorticityStrength(float add) {
+        this->vorticityStrength += add;
+    }
+
+    float getVorticityStrength() {
+        return this->vorticityStrength;
+    }
+
+    float getFlipRatio() {
+        return this->flipRatio;
+    }
+
+    void addToFlipRatio(const float add) {
+        this->flipRatio += add;
     }
 };
