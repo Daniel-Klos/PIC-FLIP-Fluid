@@ -10,7 +10,7 @@ struct PressureSolver {
     int AIR_CELL = fluid_attributes.AIR_CELL;
     int SOLID_CELL = fluid_attributes.SOLID_CELL;
 
-    float k;
+    float k = 8.f;
     float overRelaxation = 1.9f;
 
     std::vector<double> residual;
@@ -25,7 +25,7 @@ struct PressureSolver {
 
 
     PressureSolver(FluidState &fas, int numPressureIters_): fluid_attributes(fas), numPressureIters(numPressureIters_) {
-        int n = fluid_attributes.numY;
+        n = fluid_attributes.numY;
 
         this->dotProducts.resize(fluid_attributes.numThreads);
 
@@ -427,5 +427,21 @@ struct PressureSolver {
                 }
             }
         }
+    }
+
+    void addToNumPressureIters(int32_t add) {
+        numPressureIters += add;
+    }
+
+    int32_t getNumPressureIters() {
+        return numPressureIters;
+    }
+
+    void addToDivergenceModifier(float add) {
+        this->k += add;
+    }
+
+    float getDivergenceModifier() {
+        return this->k;
     }
 };
