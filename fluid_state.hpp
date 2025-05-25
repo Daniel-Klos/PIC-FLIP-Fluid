@@ -138,4 +138,20 @@ struct FluidState {
     void addToFlipRatio(const float add) {
         this->flipRatio += add;
     }
+
+    void addToGravityX(float add) {
+        this->gravityX += add;
+    }
+
+    float getGravityX() {
+        return this->gravityX;
+    }
+
+    void addToGravityY(float add) {
+        this->gravityY += add;
+    }
+
+    float getGravityY() {
+        return this->gravityY;
+    }
 };
