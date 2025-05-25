@@ -12,7 +12,7 @@ struct FluidRenderer {
     float radius;
     float invSpacing;
 
-    float diffusionRatio;
+    float diffusionRatio = 0.7f;
 
     sf::RenderWindow &window;
 
@@ -179,7 +179,7 @@ struct FluidRenderer {
 
     void updateVertexArrayDiffusion(const uint32_t startIndex, const uint32_t endIndex) {
         for (uint32_t index = startIndex; index < endIndex; ++index) {
-            const float s = 0.01f;
+            const float s = 1.f;
 
             int i = 4 * index;
             const float px = fluid_attributes.positions[2 * index];
@@ -198,7 +198,7 @@ struct FluidRenderer {
             const int yi = clamp(std::floor(py * invSpacing), 1, fluid_attributes.numY - 1);
             const int cellNr = xi * n + yi;
 
-            const float d0 = fluid_attributes.restDensity;
+            const float d0 = fluid_attributes.particleRestDensity;
 
             if (d0 > 0.f) {
                 const float relDensity = this->fluid_attributes.cellDensities[cellNr] / d0;
