@@ -7,41 +7,27 @@
 #include <random>
 #include <array>
 
-#include "thread_pool.hpp"
 #include "collision_grid.hpp"
+#include "pressure_solver.hpp"
+#include "transfer_grid.hpp"
+#include "rendering.hpp"
 
-class Fluid {
+class FluidHandler {
+    int FLUID_CELL;
+    int AIR_CELL;
+    int SOLID_CELL;
     int numX;
     int numY;
-    float numCells;
+    int n; // n = numY
     float invSpacing;
-    float cellSpacing;
-    int numParticles;
+    float halfSpacing;
     float radius;
-    std::vector<float> u;
-    std::vector<float> v;
-    std::vector<float> du;
-    std::vector<float> dv;
-    std::vector<float> prevU;
-    std::vector<float> prevV;
-    std::vector<float> p;
-    std::vector<float> cellType;
-    std::vector<float> cellColor;
-    std::vector<float> positions;
-    std::vector<float> velocities;
-    std::vector<float> particleDensity;
-    float particleRestDensity = 0;
+    float k;
+    float dt;
     bool interacting = false;
-    int WIDTH;
-    int HEIGHT;
 
-    static constexpr float restitution = 0.f;
     float checkseparationDist;
     float moveDist;
-   
-    int FLUID_CELL = 0;
-    int AIR_CELL = 1;
-    int SOLID_CELL = 2;
 
     float objectRadius;
     float objectX;
@@ -49,7 +35,6 @@ class Fluid {
     float objectPrevX;
     float objectPrevY;
     sf::CircleShape objectDrawer;
-    std::map<int, float> rigidObjectQueries;
     float checkRigidObjectseparationDist;
     float objectXVel = 0;
     float objectYVel = 0;
@@ -64,42 +49,8 @@ class Fluid {
     float generatorRadius = forceObjectRadius;
     sf::RectangleShape generatorDrawer;
 
-    std::vector<int> particleColors;
-
-    float gravityX;
-    float gravityY;
-
-    std::array<std::array<int, 3>, 100> velGradient;
-    std::array<std::array<int, 3>, 4> velColorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
-
-    std::array<std::array<int, 3>, 100> vortGradient;
-    std::array<std::array<int, 3>, 4> vortColorMap{{{0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
-
-    std::array<std::array<int, 3>, 100> tempgradient;
-    std::array<std::array<int, 3>, 4> tempMap{{{0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}}};
-    // some nice gradients to put into these colorMaps:
-    // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
-    // night ocean: {0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
-    // sunset: {0, 0, 64}, {128, 0, 128}, {255, 128, 0}, {255, 255, 0}
-    // brighter sunset: {0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
-    // orange to white: {102, 51, 0}, {204, 122, 0}, {255, 153, 51}, {255, 255, 255}
-    // ice: {0, 102, 204}, {173, 216, 230}, {224, 255, 255}, {255, 250, 250}
-    // lava: {128, 0, 0}, {255, 69, 0}, {255, 140, 0}, {255, 215, 0}
-    // deep space: {0, 0, 32}, {64, 0, 128}, {128, 0, 255}, {192, 192, 255}
-    // dark blue orange: {0, 0, 128}, {0, 128, 255}, {255, 128, 0}, {255, 255, 0}
-    // lightning mcqueen: {255, 0, 0}, {255, 69, 0}, {255, 165, 0}, {255, 255, 0}
-    // rainbow: {255, 0, 0}, {255, 255, 0}, {0, 255, 0}, {0, 200, 255} 
-
-    float k;
-
-    float timeForTransfer;
-    float timeForseparation;
-    float timeForIncompressibility;
-
     int numRowsPerThread;
     int numMissedRows;
-    
-    tp::ThreadPool& thread_pool;
 
     const float colorDiffusionCoeff = 0.001f;
 
@@ -112,8 +63,6 @@ class Fluid {
     CollisionGrid collisionGrid;
     CollisionGrid cellOccupantsGrid;
 
-    float dt;
-
     bool forceObjectActive = true;
     bool rigidObjectActive = false;
     bool generatorActive = false;
@@ -124,61 +73,15 @@ class Fluid {
     float obstacleTextureSizeX;
     float obstacleTextureSizeY;
 
-    float separationInit;
-
-    float vorticityStrength;
-
-    float flipRatio;
-    float overRelaxation;
-    float numPressureIters;
-
-    std::vector<int32_t> nr0;
-    std::vector<int32_t> nr1;
-    std::vector<int32_t> nr2;
-    std::vector<int32_t> nr3;
-
-    std::vector<float> d0;
-    std::vector<float> d1;
-    std::vector<float> d2;
-    std::vector<float> d3;
-
-    std::vector<float> temperatures;
-    // how quickly the ground transfers heat to the particles
-    float groundConductivity = 100.f;
-    // how quickly particles transfer heat between themselves
-    float interConductivity = 25.f;
-    // how quickly particles accelerate upwards due to heat
-    float fireStrength = 75.f;
-    // how quickly particles lose heat
-    float tempDiffusion = 0.1f;
-
     int32_t renderPattern = 0;
 
     bool fireActive = false;
 
     std::vector<uint32_t> collisions;
 
-    std::vector<double> residual;
-    std::vector<double> pressure;
-    std::vector<double> Adiag;
-    std::vector<double> si;
-    std::vector<double> li;
-    std::vector<double> precon;
-    std::vector<double> z;
-    std::vector<double> search;
-
     sf::RectangleShape cellDrawer;
 
-    bool stop = false;
-    bool step = false;
-
-    uint32_t numThreads;
-    uint32_t particlesPerThread;
-    uint32_t numMissedParticles; 
-
     bool solidDrawing = false;
-
-    int n;
 
     sf::Font font;
 
@@ -186,19 +89,6 @@ class Fluid {
 
     bool leftMouseDown = false;
     bool rightMouseDown = false;
-
-    float halfSpacing;
-
-    //sf::CircleShape circleDrawer;
-
-    sf::VertexArray va{sf::PrimitiveType::Quads};
-
-    sf::Texture texture;
-
-    sf::RenderStates states;
-
-    std::vector<sf::Vertex> vaCopy;
-
 
     std::vector<sf::Vector2i> obstaclePositions;
     sf::VertexArray obstacleVa{sf::PrimitiveType::Quads};
@@ -210,8 +100,6 @@ class Fluid {
     sf::RectangleShape pencil;
 
     int pencilRadius = 1;
-
-    std::vector<double> dotProducts;
 
     float miscellaneousTime = 0.f;
     float CollisionTime = 0.f;
@@ -230,102 +118,46 @@ class Fluid {
     float matVecTime = 0.f;
     float scaledAddTime = 0.f;
 
-public:
-    Fluid(float WIDTH, float HEIGHT, float cellSpacing, int numParticles, float gravityX_, float gravityY_, float k, float diffusionRatio, float separationInit, float vorticityStrength_, float flipRatio_, float overRelaxation_, float numPressureIters_, tp::ThreadPool& tp)
-        : numX(std::floor(WIDTH / cellSpacing)), numY(std::floor(HEIGHT / cellSpacing)), numCells(numX * numY), numParticles(numParticles), WIDTH(WIDTH), HEIGHT(HEIGHT), gravityX(gravityX_), gravityY(gravityY_), k(k), diffusionRatio(diffusionRatio), separationInit(separationInit), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), overRelaxation(overRelaxation_), numPressureIters(numPressureIters_), thread_pool(tp) {
+    PressureSolver &pressure_solver;
 
-            /*circleDrawer.setFillColor(sf::Color(255, 0, 0));
-            circleDrawer.setRadius(5);
-            circleDrawer.setOrigin(5.f / 2.f, 5.f / 2.f);*/
+    FluidState &fluid_attributes;
+
+    FluidRenderer &fluid_renderer;
+
+    TransferGrid &transfer_grid;
+
+public:
+    FluidHandler(float k, float overRelaxation_, float numPressureIters_, FluidState& fas, PressureSolver& ps, TransferGrid& tg, FluidRenderer& fr): k(k), fluid_attributes(fas), pressure_solver(ps), transfer_grid(tg), fluid_renderer(fr) {
 
             /*font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
 
-            n = this->numY;
+            
+            FLUID_CELL = fluid_attributes.FLUID_CELL;
+            AIR_CELL = fluid_attributes.AIR_CELL;
+            SOLID_CELL = fluid_attributes.SOLID_CELL;
 
-            this->cellSpacing = std::max(WIDTH / numX, HEIGHT / numY);
-            this->invSpacing = 1.f / this->cellSpacing;
+            numY = fluid_attributes.numY;
+            numX = fluid_attributes.numX;
+            n = numY;
 
-            this->radius = 0.3 * cellSpacing;
+            invSpacing =  1.f / fluid_attributes.cellSpacing;
+            halfSpacing = 0.5f * fluid_attributes.cellSpacing;
+            radius = fluid_attributes.radius;
 
-            this->halfSpacing = cellSpacing / 2;
-
-            pencil.setSize(sf::Vector2f{cellSpacing, cellSpacing});
+            pencil.setSize(sf::Vector2f{fluid_attributes.cellSpacing, fluid_attributes.cellSpacing});
             pencil.setOrigin(halfSpacing, halfSpacing);
             pencil.setOutlineThickness(1);
             pencil.setOutlineColor(sf::Color::Black);
 
-            this->numThreads = thread_pool.m_thread_count;
-            this->particlesPerThread = numParticles / numThreads;
-            this->numMissedParticles = numParticles - numThreads * particlesPerThread;
-
-            this->dotProducts.resize(numThreads);
-
-            auto size = sf::Vector2f(cellSpacing, cellSpacing);
+            auto size = sf::Vector2f(fluid_attributes.cellSpacing, fluid_attributes.cellSpacing);
             this->cellDrawer.setSize(size);
             this->cellDrawer.setOutlineColor(sf::Color::White);
             this->cellDrawer.setOutlineThickness(1.f);
 
-            this->Adiag.resize(numX * numY);
-            this->si.resize(numX * numY);
-            this->li.resize(numX * numY);
-            this->precon.resize(numX * numY);
-            this->z.resize(numX * numY);
-            this->search.resize(numX * numY);
-            this->residual.resize(numX * numY);
-            this->pressure.resize(numX * numY);
-
-            this->collisions.resize(numParticles);
-            this->temperatures.resize(numParticles);
-
-            this->nr0.resize(2 * numParticles);
-            this->nr1.resize(2 * numParticles);
-            this->nr2.resize(2 * numParticles);
-            this->nr3.resize(2 * numParticles);
-
-            this->d0.resize(2 * numParticles);
-            this->d1.resize(2 * numParticles);
-            this->d2.resize(2 * numParticles);
-            this->d3.resize(2 * numParticles);
-
-            this->u.resize(numCells);
-            this->v.resize(numCells);
-            this->du.resize(numCells);
-            this->dv.resize(numCells);
-            this->prevU.resize(numCells);
-            this->prevV.resize(numCells);
-            this->p.resize(numCells);
-            this->cellType.resize(numCells);
-            this->cellColor.resize(3 * numCells);
-            this->positions.resize(2 * numParticles);
-            this->velocities.resize(2 * numParticles);
-            this->particleDensity.resize(numCells);
-            this->particleColors.resize(3 * numParticles);
-            std::fill(begin(particleColors), end(particleColors), 0);
-
-            this->va.resize(numParticles * 4);
-            this->vaCopy.resize(numParticles * 4);
-            texture.loadFromFile("white_circle.png");
-            texture.generateMipmap();
-            auto const texture_size = static_cast<sf::Vector2f>(texture.getSize());
-            for (int index = 0; index < numParticles; ++index) {
-                int i = 4 * index;
-                va[i].texCoords = {0.f, 0.f};
-                va[i + 1].texCoords = {texture_size.x, 0.f};
-                va[i + 2].texCoords = {texture_size.x, texture_size.y};
-                va[i + 3].texCoords = {0.f, texture_size.y};
-
-                vaCopy[i].texCoords = {0.f, 0.f};
-                vaCopy[i + 1].texCoords = {texture_size.x, 0.f};
-                vaCopy[i + 2].texCoords = {texture_size.x, texture_size.y};
-                vaCopy[i + 3].texCoords = {0.f, texture_size.y};
-            }
-            states.texture = &texture;
-
-            textureSizeX = texture_size.x;
-            textureSizeY = texture_size.y;
+            this->collisions.resize(fluid_attributes.num_particles);
 
             size_t numObstacles = 2 * numX + 2 * (numY - 2);
             this->obstacleVa.resize(4 * numObstacles);
@@ -353,53 +185,19 @@ public:
             obstacleTextureSizeX = obstacle_texture_size.x;
             obstacleTextureSizeY = obstacle_texture_size.y;
 
-
             this->scalingFactor = 2 * radius;
 
-            this->scaledWIDTH = std::ceil(static_cast<float>(WIDTH) / scalingFactor);
-            this->scaledHEIGHT = std::ceil(static_cast<float>(HEIGHT) / scalingFactor);
+            this->scaledWIDTH = std::ceil(static_cast<float>(fluid_attributes.WIDTH) / scalingFactor);
+            this->scaledHEIGHT = std::ceil(static_cast<float>(fluid_attributes.HEIGHT) / scalingFactor);
 
             collisionGrid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
 
             cellOccupantsGrid = CollisionGrid(numX, numY);
-
-            // initializing particle positions
-            float separation = radius / separationInit;  // gridsize: 65: 2.5; 70: 2.3; 90: 2.f; 130: 1.2
-
-            int wideNum = std::floor((WIDTH - 2 * cellSpacing - 2) / (radius * separation));
-            int highNum = numParticles / wideNum;
-
-            float starting_px = radius + cellSpacing + 2;//(WIDTH - (radius * separation * wideNum)) / 2 + radius;
-            float starting_py = (HEIGHT - (radius * separation * highNum)) / 2 + radius;
-
-            float px = starting_px;
-            float py = starting_py;
-
-            int addTo = numParticles - (wideNum * highNum);
-
-            bool offset = true;
-            for (int i = 0; i < wideNum * highNum + addTo; ++i) {
-                this->positions[i * 2] = px;
-                this->positions[i * 2 + 1] = py;
-                this->particleColors[3 * i] = 0;
-                this->particleColors[3 * i + 1] = 0;
-                this->particleColors[3 * i + 2] = 255;
-
-                px += this->radius * separation;
-
-                if ((i + 1) % wideNum == 0) {
-                    px = starting_px;
-                    if (offset) {
-                        px += this->radius;
-                    }
-                    py += this->radius * separation;
-                    offset = !offset;
-                }
-            }
             
+            // move these to respective files
             int idx = 0;
             for (int i = 0; i < this->numX; ++i) {
-                this->cellType[i * n] = SOLID_CELL;
+                fluid_attributes.cellType[i * n] = SOLID_CELL;
                 obstaclePositions[idx] = sf::Vector2i{i, 0};
 
                 auto pos = gridCellToPos(i * n);
@@ -414,7 +212,7 @@ public:
                 ++idx;
             }
             for (int i = 0; i < this->numX; ++i) {
-                this->cellType[i * n + numY - 1] = SOLID_CELL;
+                fluid_attributes.cellType[i * n + numY - 1] = SOLID_CELL;
                 obstaclePositions[idx] = sf::Vector2i{i, numY - 1};
 
                 auto pos = gridCellToPos(i * n + numY - 1);
@@ -429,7 +227,7 @@ public:
                 ++idx;
             }
             for (int j = 1; j < this->numY - 1; ++j) {
-                this->cellType[j] = SOLID_CELL;
+                fluid_attributes.cellType[j] = SOLID_CELL;
                 obstaclePositions[idx] = sf::Vector2i{0, j};
 
                 auto pos = gridCellToPos(j);
@@ -444,7 +242,7 @@ public:
                 ++idx;
             }
             for (int j = 1; j < this->numY - 1; ++j) {
-                this->cellType[(numX - 1) * n + j] = SOLID_CELL;
+                fluid_attributes.cellType[(numX - 1) * n + j] = SOLID_CELL;
                 obstaclePositions[idx] = sf::Vector2i{numX - 1, j};
 
                 auto pos = gridCellToPos((numX - 1) * n + j);
@@ -459,11 +257,13 @@ public:
                 ++idx;
             }
 
+            // -----------------------------------
+
             this->moveDist = 2 * radius;
             this->checkseparationDist = moveDist * moveDist;
 
-            this->objectRadius = 50;//cellSpacing * 3;
-            this->objectX = std::floor(WIDTH / 2);
+            this->objectRadius = 50;//fluid_attributes.cellSpacing * 3;
+            this->objectX = std::floor(fluid_attributes.WIDTH / 2);
             this->objectY = 2 * objectRadius + 10;
             this->objectPrevX = objectX;
             this->objectPrevY = objectY;
@@ -484,44 +284,17 @@ public:
             this->generatorDrawer.setOutlineThickness(1.f);
             this->generatorDrawer.setFillColor(sf::Color::Transparent);
             this->generatorDrawer.setOutlineColor(sf::Color::Red); 
-
-            // lerp between the values in colorMap to create a gradient array 
-            float num_colors = velColorMap.size() - 1; // number of colors - 1
-            float num_steps = 1.f * velGradient.size() / num_colors; //num_steps = 50 * key_range
-            int index = 0;
-            for (int i = 0; i < num_colors; ++i) {  
-                for (int x = 0; x < num_steps; ++x) {
-                    float t = 1.f * x / num_steps;  // Interpolation factor
-                    // Linear interpolation for r, g, b values between colorMap[i] andcolorMap [i+1]
-                    int r = (int)(velColorMap[i][0] * (1 - t) + velColorMap[i + 1][0] * t);
-                    int g = (int)(velColorMap[i][1] * (1 - t) + velColorMap[i + 1][1] * t);
-                    int b = (int)(velColorMap[i][2] * (1 - t) + velColorMap[i + 1][2] * t);
-                    velGradient[index] = std::array<int, 3>{r, g, b};
-
-                    r = (int)(tempMap[i][0] * (1 - t) + tempMap[i + 1][0] * t);
-                    g = (int)(tempMap[i][1] * (1 - t) + tempMap[i + 1][1] * t);
-                    b = (int)(tempMap[i][2] * (1 - t) + tempMap[i + 1][2] * t);
-                    tempgradient[index] = std::array<int, 3>{r, g, b};
-
-                    r = (int)(vortColorMap[i][0] * (1 - t) + vortColorMap[i + 1][0] * t);
-                    g = (int)(vortColorMap[i][1] * (1 - t) + vortColorMap[i + 1][1] * t);
-                    b = (int)(vortColorMap[i][2] * (1 - t) + vortColorMap[i + 1][2] * t);
-                    vortGradient[index] = std::array<int, 3>{r, g, b};
-
-                    index++;
-                }
-            }
-            
     }
 
     sf::Vector2f gridCellToPos(int idx) {
         int i = idx % n;
         int j = idx / n;
-        float x = halfSpacing + (j * cellSpacing);
-        float y = halfSpacing + (i * cellSpacing);
+        float x = halfSpacing + (j * fluid_attributes.cellSpacing);
+        float y = halfSpacing + (i * fluid_attributes.cellSpacing);
         return sf::Vector2f{x, y};
     }
 
+    // move all these into general_math file
     template <typename T>
     int find(std::vector<T> *arr, T find) {
         size_t len = arr->size();
@@ -533,19 +306,6 @@ public:
         return -1;
     } 
 
-    void drawCells(sf::RenderWindow& window) {
-        for (int i = 0; i < numX; ++i) {
-            for (int j = 0; j < numY; ++j) {
-                int idx = i * numY + j;
-                if (cellType[idx] == SOLID_CELL) {
-                    cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
-                    cellDrawer.setFillColor(sf::Color(cellColor[3 * idx], cellColor[3 * idx + 1], cellColor[3 * idx + 2]));
-                    window.draw(cellDrawer);
-                }
-            }
-        }
-    }
-
     float clamp(float x, float min, float max) {
         return (x < min) * min + (x > max) * max + (x >= min && x <= max) * x;
     }
@@ -555,71 +315,66 @@ public:
     }
 
     void createRandomPositions() {
-        std::uniform_int_distribution<int> randWidth(radius, WIDTH - radius);
-        std::uniform_int_distribution<int> randHeight(radius, HEIGHT - radius);
+        std::uniform_int_distribution<int> randWidth(radius, fluid_attributes.WIDTH - radius);
+        std::uniform_int_distribution<int> randHeight(radius, fluid_attributes.HEIGHT - radius);
 
         std::random_device rd;
         std::mt19937 mt(rd());
 
-        for (int i = 0; i < numParticles; ++i) {
-            positions[i * 2] = randWidth(mt);
-            positions[i * 2 + 1] = randHeight(mt);
+        for (int i = 0; i < fluid_attributes.num_particles; ++i) {
+            fluid_attributes.positions[i * 2] = randWidth(mt);
+            fluid_attributes.positions[i * 2 + 1] = randHeight(mt);
         }
     }
 
     void integrate(const uint32_t startIndex, const uint32_t endIndex) {
         for (int i = startIndex; i < endIndex; ++i) {
-            this->positions[2 * i] += this->velocities[2 * i] * dt;
-            this->positions[2 * i + 1] += this->velocities[2 * i + 1] * dt;
-            this->velocities[2 * i + 1] += gravityX * dt;
-            this->velocities[2 * i] += gravityY * dt;
+            fluid_attributes.positions[2 * i] += fluid_attributes.velocities[2 * i] * dt;
+            fluid_attributes.positions[2 * i + 1] += fluid_attributes.velocities[2 * i + 1] * dt;
+            fluid_attributes.velocities[2 * i + 1] += fluid_attributes.gravityX * dt;
+            fluid_attributes.velocities[2 * i] += fluid_attributes.gravityY * dt;
 
-            if (this->fireActive && this->renderPattern == 3 && positions[2 * i + 1] < HEIGHT - cellSpacing - 10) {
-                this->velocities[2 * i + 1] -= fireStrength * temperatures[i] * dt;
-                if (this->temperatures[i] > 0) {
-                    this->temperatures[i] -= tempDiffusion;
+            if (this->fireActive && this->renderPattern == 3 && fluid_attributes.positions[2 * i + 1] < fluid_attributes.HEIGHT - fluid_attributes.cellSpacing - 10) {
+                fluid_attributes.velocities[2 * i + 1] -= fluid_attributes.fireStrength * fluid_attributes.temperatures[i] * dt;
+                if (fluid_attributes.temperatures[i] > 0) {
+                    fluid_attributes.temperatures[i] -= fluid_attributes.tempDiffusion;
                 }
                 if (collisions[i] == 0) {
-                    this->temperatures[i] = 0;
+                    fluid_attributes.temperatures[i] = 0;
                 }
             }
         }
     }
 
     void integrateMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->integrate(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->integrate(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->integrate(start, end);
+        });
     }
 
     void addObjectsToGrids()
     {
+
         collisionGrid.clear();
         cellOccupantsGrid.clear();
 
-        const float minX = cellSpacing;
-        const float maxX = WIDTH - cellSpacing;
-        const float minY = cellSpacing;
-        const float maxY = HEIGHT - cellSpacing;
+        const float minX = fluid_attributes.cellSpacing;
+        const float maxX = fluid_attributes.WIDTH - fluid_attributes.cellSpacing;
+        const float minY = fluid_attributes.cellSpacing;
+        const float maxY = fluid_attributes.HEIGHT - fluid_attributes.cellSpacing;
 
         uint32_t i{0};
-        for (int32_t index = 0; index < numParticles; ++index) {
-            float x = positions[2 * index];
-            float y = positions[2 * index + 1];
-            if (x > minX && x < maxX && y > minY && y < maxY) {
 
+        for (int32_t index = 0; index < fluid_attributes.num_particles; ++index) {
+            float x = fluid_attributes.positions[2 * index];
+            float y = fluid_attributes.positions[2 * index + 1];
+            if (x > minX && x < maxX && y > minY && y < maxY) {
                 int32_t gridX = x / scalingFactor;
                 int32_t gridY = y / scalingFactor;
                 collisionGrid.addAtom(gridX, gridY, i);
                 
-                int32_t cellOccupantsX = x / cellSpacing;
-                int32_t cellOccupantsY = y / cellSpacing;
+                int32_t cellOccupantsX = x / fluid_attributes.cellSpacing;
+                int32_t cellOccupantsY = y / fluid_attributes.cellSpacing;
                 cellOccupantsGrid.addAtom(cellOccupantsX, cellOccupantsY, i);
 
             }
@@ -630,8 +385,8 @@ public:
     void solveContact(uint32_t index, uint32_t otherIndex)
     {
         constexpr float eps           = 0.0001f;
-        const float o2_o1X = positions[2 * index] - positions[2 * otherIndex];
-        const float o2_o1Y = positions[2 * index + 1] - positions[2 * otherIndex + 1];
+        const float o2_o1X = fluid_attributes.positions[2 * index] - fluid_attributes.positions[2 * otherIndex];
+        const float o2_o1Y = fluid_attributes.positions[2 * index + 1] - fluid_attributes.positions[2 * otherIndex + 1];
 
         const float dist2 = o2_o1X * o2_o1X + o2_o1Y * o2_o1Y;
 
@@ -641,18 +396,20 @@ public:
             const float col_vecX = o2_o1X * delta;
             const float col_vecY = o2_o1Y * delta;
 
-            positions[2 * index] += col_vecX;
-            positions[2 * index + 1] += col_vecY;
+            fluid_attributes.positions[2 * index] += col_vecX;
+            fluid_attributes.positions[2 * index + 1] += col_vecY;
 
-            positions[2 * otherIndex] -= col_vecX;
-            positions[2 * otherIndex + 1] -= col_vecY;
+            fluid_attributes.positions[2 * otherIndex] -= col_vecX;
+            fluid_attributes.positions[2 * otherIndex + 1] -= col_vecY;
 
-            const float transfer = (temperatures[index] - temperatures[otherIndex]) * interConductivity * dt;
-            temperatures[index] -= transfer;
-            temperatures[otherIndex] += transfer;
+            const float transfer = (fluid_attributes.temperatures[index] - fluid_attributes.temperatures[otherIndex]) * fluid_attributes.interConductivity * dt;
+            fluid_attributes.temperatures[index] -= transfer;
+            fluid_attributes.temperatures[otherIndex] += transfer;
 
             collisions[index]++;
             collisions[otherIndex]++;
+
+
         }
     }
 
@@ -701,8 +458,8 @@ public:
                 for (uint32_t i{0}; i < cell.objects_count; ++i) {
                     const uint32_t particleIndex = cell.objects[i];
 
-                    float dx = positions[particleIndex * 2] - mouseX;
-                    float dy = positions[particleIndex * 2 + 1] - mouseY;
+                    float dx = fluid_attributes.positions[particleIndex * 2] - mouseX;
+                    float dy = fluid_attributes.positions[particleIndex * 2 + 1] - mouseY;
                     float d2 = dx * dx + dy * dy;
 
                     if (d2 > checkForceObjectseparationDist || d2 == 0.0f) continue;
@@ -713,8 +470,8 @@ public:
             
                     float centerT = 1 - edgeT;
 
-                    velocities[2 * particleIndex] += (dx * strength - velocities[2 * particleIndex]) * centerT * dt;
-                    velocities[2 * particleIndex + 1] += (dy * strength - velocities[2 * particleIndex + 1]) * centerT * dt;
+                    fluid_attributes.velocities[2 * particleIndex] += (dx * strength - fluid_attributes.velocities[2 * particleIndex]) * centerT * dt;
+                    fluid_attributes.velocities[2 * particleIndex + 1] += (dy * strength - fluid_attributes.velocities[2 * particleIndex + 1]) * centerT * dt;
                 }
             }
         }
@@ -722,13 +479,12 @@ public:
 
     void solveCollisions()
     {
-        const uint32_t thread_count = thread_pool.m_thread_count;
-        const uint32_t slice_count  = thread_count * 2;
+        const uint32_t slice_count  = fluid_attributes.numThreads * 2;
         const uint32_t slice_size   = (collisionGrid.width / slice_count) * collisionGrid.height;
-        const uint32_t last_cell    = 2 * thread_count * slice_size;
+        const uint32_t last_cell    = 2 * fluid_attributes.numThreads * slice_size;
         
-        for (uint32_t i{0}; i < thread_count; ++i) {
-            thread_pool.addTask([this, i, slice_size]{
+        for (uint32_t i{0}; i < fluid_attributes.numThreads; ++i) {
+            fluid_attributes.thread_pool.addTask([this, i, slice_size]{
                 uint32_t const start{2 * i * slice_size};
                 uint32_t const end  {start + slice_size};
                 solveCollisionThreaded(start, end);
@@ -736,65 +492,59 @@ public:
         }
         
         if (last_cell < collisionGrid.data.size()) {
-            thread_pool.addTask([this, last_cell]{
+            fluid_attributes.thread_pool.addTask([this, last_cell]{
                 solveCollisionThreaded(last_cell, static_cast<uint32_t>(collisionGrid.data.size()));
             });
         }
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.waitForCompletion();
         
-        for (uint32_t i{0}; i < thread_count; ++i) {
-            thread_pool.addTask([this, i, slice_size]{
+        for (uint32_t i{0}; i < fluid_attributes.numThreads; ++i) {
+            fluid_attributes.thread_pool.addTask([this, i, slice_size]{
                 uint32_t const start{(2 * i + 1) * slice_size};
                 uint32_t const end  {start + slice_size};
                 solveCollisionThreaded(start, end);
             });
         }
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.waitForCompletion();
     }
 
     void constrainWalls(const uint32_t startIndex, const uint32_t endIndex) {
         for (int i = startIndex; i < endIndex; ++i) {
-            if (this->positions[2 * i] - radius < this->cellSpacing) {
-                this->positions[2 * i] = radius + this->cellSpacing;
-                if (this->velocities[2 * i] < 0) {
-                    this->velocities[2 * i] *= -restitution;
+            if (fluid_attributes.positions[2 * i] - radius < this->fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[2 * i] = radius + this->fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[2 * i] < 0) {
+                    fluid_attributes.velocities[2 * i] = 0.f;
                 }
             }
-            else if (this->positions[2 * i] + radius > WIDTH - this->cellSpacing) {
-                this->positions[2 * i] = WIDTH - radius - this->cellSpacing;
-                if (this->velocities[2 * i] > 0) {
-                    this->velocities[2 * i] *= -restitution;
+            else if (fluid_attributes.positions[2 * i] + radius > fluid_attributes.WIDTH - this->fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[2 * i] = fluid_attributes.WIDTH - radius - this->fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[2 * i] > 0) {
+                    fluid_attributes.velocities[2 * i] = 0.f;
                 }
             }
-            if (this->positions[2 * i + 1] - radius < this->cellSpacing) {
-                this->positions[2 * i + 1] = radius + this->cellSpacing;
-                if (this->velocities[2 * i + 1] < 0) {
-                    this->velocities[2 * i + 1] *= -restitution;
+            if (fluid_attributes.positions[2 * i + 1] - radius < this->fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[2 * i + 1] = radius + this->fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[2 * i + 1] < 0) {
+                    fluid_attributes.velocities[2 * i + 1] = 0.f;
                 }
             }
-            else if (this->positions[2 * i + 1] + radius > HEIGHT - this->cellSpacing) {
-                this->positions[2 * i + 1] = HEIGHT - radius - this->cellSpacing;
-                if (this->velocities[2 * i + 1] > 0) {
-                    this->velocities[2 * i + 1] *= -restitution;
+            else if (fluid_attributes.positions[2 * i + 1] + radius > fluid_attributes.HEIGHT - this->fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[2 * i + 1] = fluid_attributes.HEIGHT - radius - this->fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[2 * i + 1] > 0) {
+                    fluid_attributes.velocities[2 * i + 1] = 0.f;
                 }
                 const float remove = 10.f; // 5
-                if (this->renderPattern == 3 && this->temperatures[i] < tempgradient.size() && this->positions[2 * i] > WIDTH / remove && this->positions[2 * i] < WIDTH - WIDTH / remove) {
-                    this->temperatures[i] += groundConductivity;
+                if (this->renderPattern == 3 && fluid_attributes.temperatures[i] < fluid_renderer.tempgradient.size() && fluid_attributes.positions[2 * i] > fluid_attributes.WIDTH / remove && fluid_attributes.positions[2 * i] < fluid_attributes.WIDTH - fluid_attributes.WIDTH / remove) {
+                    fluid_attributes.temperatures[i] += fluid_attributes.groundConductivity;
                 }
             }
         }
     }
 
     void constrainWallsMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->constrainWalls(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->constrainWalls(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->constrainWalls(start, end);
+        });
     }
 
     float calculateBoxNormals(float bx, float by, float px, float py, float& nx, float& ny) {
@@ -816,7 +566,7 @@ public:
 
         int idx = n * static_cast<int>(px * invSpacing) + static_cast<int>(py * invSpacing);
     
-        if (pdx > 0 && pdy > 0 && cellType[idx + dirX] != SOLID_CELL && cellType[idx + dirY] != SOLID_CELL) {
+        if (pdx > 0 && pdy > 0 && fluid_attributes.cellType[idx + dirX] != SOLID_CELL && fluid_attributes.cellType[idx + dirY] != SOLID_CELL) {
             float len = dist - (insideDist - radius);
             nx = -dirX * dx / len;
             ny = -dirY * dy / len;
@@ -834,8 +584,8 @@ public:
     }
 
     void separateParticle(float& px, float& py, float& vx, float& vy) {
-        int localX = px / cellSpacing;
-        int localY = py / cellSpacing;
+        int localX = px / fluid_attributes.cellSpacing;
+        int localY = py / fluid_attributes.cellSpacing;
 
         int x0 = std::max(0, localX - 1);
         int x1 = std::min(numX - 1, localX + 1);
@@ -847,10 +597,10 @@ public:
 
         for (int i = x0; i <= x1; ++i) {
             for (int j = y0; j <= y1; ++j) {
-                if (cellType[i * n + j] == SOLID_CELL) {
+                if (fluid_attributes.cellType[i * n + j] == SOLID_CELL) {
                     float nx = 0;
                     float ny = 0;
-                    float dist = calculateBoxNormals(i * cellSpacing + halfSpacing, j * cellSpacing + halfSpacing, px, py, nx, ny);
+                    float dist = calculateBoxNormals(i * fluid_attributes.cellSpacing + halfSpacing, j * fluid_attributes.cellSpacing + halfSpacing, px, py, nx, ny);
                     if (dist < 0.f) {
                         float velocityNormal = vx * -nx + vy * -ny;
                         if (velocityNormal < 0) {
@@ -867,25 +617,19 @@ public:
 
     void collideSurfaces(const uint32_t start, const uint32_t end) {
         for (int i = start; i < end; ++i) {
-            separateParticle(positions[2 * i], positions[2 * i + 1], velocities[2 * i], velocities[2 * i + 1]);
+            separateParticle(fluid_attributes.positions[2 * i], fluid_attributes.positions[2 * i + 1], fluid_attributes.velocities[2 * i], fluid_attributes.velocities[2 * i + 1]);
         }
     }
 
     void collideSurfacesMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->collideSurfaces(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->collideSurfaces(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->collideSurfaces(start, end);
+        });
     }
 
     void drawSolids() {
-        int localX = static_cast<int>(mouseX / cellSpacing);
-        int localY = static_cast<int>(mouseY / cellSpacing);
+        int localX = static_cast<int>(mouseX / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(mouseY / fluid_attributes.cellSpacing);
 
         int numObstacles = obstaclePositions.size();
 
@@ -902,8 +646,8 @@ public:
 
                     int idx = x * numY + y;
 
-                    if (cellType[idx] != SOLID_CELL) {
-                        cellType[idx] = SOLID_CELL;
+                    if (fluid_attributes.cellType[idx] != SOLID_CELL) {
+                        fluid_attributes.cellType[idx] = SOLID_CELL;
                         obstaclePositions[numObstacles + numAddedObstacles] = sf::Vector2i{x, y};
                         numAddedObstacles++;
                     }
@@ -943,8 +687,8 @@ public:
     }
 
     void eraseSolids() {
-        int localX = static_cast<int>(mouseX / cellSpacing);
-        int localY = static_cast<int>(mouseY / cellSpacing);
+        int localX = static_cast<int>(mouseX / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(mouseY / fluid_attributes.cellSpacing);
 
         int numObstacles = obstaclePositions.size();
         int numFreedCells = 0;
@@ -954,8 +698,8 @@ public:
                 int y = localY + j;
 
                 int idx = x * n + y;
-                if (cellType[idx] == SOLID_CELL && x > 0 && y > 0 && x < numX - 1 && y < numY - 1) {
-                    cellType[idx] = AIR_CELL;
+                if (fluid_attributes.cellType[idx] == SOLID_CELL && x > 0 && y > 0 && x < numX - 1 && y < numY - 1) {
+                    fluid_attributes.cellType[idx] = AIR_CELL;
                     // find the index of obstacleSet with the position we want to remove
                     // replace that index with the [numObstacles - (numFreedCells + 1)] index of obstacleSet
                     // then just resize the obstacleSet and obstacleVa after this double loop
@@ -980,823 +724,73 @@ public:
         obstaclePositions.resize(numObstacles - numFreedCells);
     }
 
-    void cacheTransferNodes(int32_t start, int32_t end, float halfHeight, int32_t component) {
-        const float h2 = halfHeight;
-
-        const float dx = (component != 0) * h2;
-        const float dy = (component == 0) * h2;
-
-        for (int32_t i = start; i < end; ++i) {
-            float x = this->positions[2 * i];
-            float y = this->positions[2 * i + 1];
-            x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
-            y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
-            // x0 is the grid position to the left of the particle, x1 is the position to the right of the particle. Both can only go up to the second to last cell to the right in the grid because we dont want to be changing wall velocities
-            int x0 = std::max(1, std::min(static_cast<int>(std::floor((x - dx) * invSpacing)), this->numX - 2)); // - 1
-            // basically x - xCell to get the weight of that cell in relation to the particle
-            // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied by grid spacing
-            float tx = ((x - dx) - x0 * cellSpacing) * invSpacing;
-            // add 1 to get the cell to the right
-            int x1 = std::min(x0 + 1, this->numX - 2); // - 1
-            // this fixes a bug that makes water touching the left wall and ceiling explode sometimes 
-            if (component == 0 && x0 == 1) {
-                x0 = x1;
-            }
-            if (component == 1 && x0 == 1) {
-                x1 = x0;
-            }
-            // same thing with y
-            int y0 = std::max(0, std::min(static_cast<int>(std::floor((y - dy) * invSpacing)), this->numY - 2)); // - 2
-            float ty = ((y - dy) - y0 * cellSpacing) * invSpacing;
-            int y1 = std::min(y0 + 1, this->numY - 1); // - 1
-            // try seeing if these have any problems when CG is implemented
-            // fixes jitter when the fluid is held with the force object at the top, but also makes the fluid stick to the top so leave out. Could just only do this first one when gravity < 0
-            /*if (component == 1 && y0 == 0) {
-                y0 = y1;
-            }
-            if (component == 0 && y0 == 0) {
-                y1 = y0;
-            }*/
-            // fixes jitter when the fluid is held with the force object at the bottom, but also introduces the same gauss seidel artifact as the right side
-            /*if (component == 1 && y0 == numY - 2) {
-                y1 = y0;
-            }*/
-            float sx = 1.f - tx;
-            float sy = 1.f - ty;
-            // weights for each corner in u/v field
-            d0[2 * i + component] = sx * sy;
-            d1[2 * i + component] = tx * sy;
-            d2[2 * i + component] = tx * ty;
-            d3[2 * i + component] = sx * ty;
-
-            // top left
-            nr0[2 * i + component] = x0 * n + y0;
-            // top right
-            nr1[2 * i + component] = x1 * n + y0;
-            // bottom right
-            nr2[2 * i + component] = x1 * n + y1;
-            //bottom left
-            nr3[2 * i + component] = x0 * n + y1;
-        }
-    }
-
-    void cacheTransferNodesMulti() {
-
-        const int32_t numThreads = thread_pool.m_thread_count;
-        const int32_t numParticlesPerThread = numParticles / numThreads;
-        const int32_t numMissedParticles = numParticles - numThreads * numParticlesPerThread;
-
-        for (int32_t i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i](){
-                cacheTransferNodes(numParticlesPerThread * i, numParticlesPerThread * i + numParticlesPerThread, halfSpacing, 0);
-                cacheTransferNodes(numParticlesPerThread * i, numParticlesPerThread * i + numParticlesPerThread, halfSpacing, 1);
-            });
-        }
-
-        cacheTransferNodes(numParticles - numMissedParticles, numParticles, halfSpacing, 0);
-        cacheTransferNodes(numParticles - numMissedParticles, numParticles, halfSpacing, 1);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void transfer(const bool& toGrid) {
-        if (toGrid) {
-            this->cacheTransferNodesMulti();
-            this->setUpTransferGrids();
-            this->transferToGrid();
-        }
-        else {
-            this->transferToParticles();
-        }
-    }
-
-    void setUpTransferGrids() {
-        const float n = this->numY;
-        const float h2 = 0.5 * cellSpacing;
-
-        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
-        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
-        std::fill(begin(this->du), end(this->du), 0.f);
-        std::fill(begin(this->dv), end(this->dv), 0.f);
-        std::fill(begin(this->u), end(this->u), 0.f);
-        std::fill(begin(this->v), end(this->v), 0.f);
-
-        // initialize outside cells to solid, every inside cell to air
-        for (int i = 0; i < this->numX; ++i) {
-            for (int j = 0; j < this->numY; ++j) {
-                if (this->cellType[i * n + j] == SOLID_CELL) {
-                    this->cellColor[3 * (i * n + j)] = 100;
-                    this->cellColor[3 * (i * n + j) + 1] = 100;
-                    this->cellColor[3 * (i * n + j) + 2] = 100;
-                }
-                else if (this->cellType[i * n + j] != SOLID_CELL) {
-                    this->cellType[i * n + j] = AIR_CELL;
-                       
-                    /*this->cellColor[3 * (i * n + j)] = 0;
-                    this->cellColor[3 * (i * n + j) + 1] = 250;
-                    this->cellColor[3 * (i * n + j) + 2] = 255;*/
-                        
-                }
-            }
-        }
-        // initialize all cells that particles are in to fluid
-        for (int i = 0; i < this->numParticles; ++i) {
-            float x = this->positions[2 * i];
-            float y = this->positions[2 * i + 1];
-
-            int xi = this->clamp(std::floor(x * invSpacing), 0, this->numX - 1);
-            int yi = this->clamp(std::floor(y * invSpacing), 0, this->numY - 1);
-
-            int cellNr = xi * n + yi;
-            if (this->cellType[cellNr] == AIR_CELL) {
-                this->cellType[cellNr] = FLUID_CELL;
-        
-                /*this->cellColor[3 * cellNr] = 0;
-                this->cellColor[3 * cellNr + 1] = 150;
-                this->cellColor[3 * cellNr + 2] = 255;*/
-                
-            }
-        }
-    }
-
-    void transferToParticle(int32_t startIndex, int32_t endIndex) {
-        const int32_t n = this->numY;
-        for (int32_t i = startIndex; i < endIndex; ++i) {
-            const int32_t ui = 2 * i;
-            const int32_t vi = 2 * i + 1;
-            const int32_t nr0_u = nr0[ui];
-            const int32_t nr1_u = nr1[ui];
-            const int32_t nr2_u = nr2[ui];
-            const int32_t nr3_u = nr3[ui];
-
-            const float d0_u = d0[ui];
-            const float d1_u = d1[ui];
-            const float d2_u = d2[ui];
-            const float d3_u = d3[ui];
-
-            const int32_t nr0_v = nr0[vi];
-            const int32_t nr1_v = nr1[vi];
-            const int32_t nr2_v = nr2[vi];
-            const int32_t nr3_v = nr3[vi];
-
-            const float d0_v = d0[vi];
-            const float d1_v = d1[vi];
-            const float d2_v = d2[vi];
-            const float d3_v = d3[vi];
-
-            const float pvx = this->velocities[ui];
-            const float pvy = this->velocities[vi];
-           
-            // these will be used to make sure that air cells are not considered when transferring velocities back to particles
-            // nr0 - offset is the same thing as [(i-1) * n]
-            // if u is being considered, then we only have to check left and right cells ([nr0] and [nr0 - n])
-            // if v is being considered, then we only have to check above and below cells ([nr0] and [nr0 - 1])
-            const float valid0u = this->cellType[nr0_u] != AIR_CELL || this->cellType[nr0_u - n] != AIR_CELL;
-            const float valid1u = this->cellType[nr1_u] != AIR_CELL || this->cellType[nr1_u - n] != AIR_CELL;
-            const float valid2u = this->cellType[nr2_u] != AIR_CELL || this->cellType[nr2_u - n] != AIR_CELL;
-            const float valid3u = this->cellType[nr3_u] != AIR_CELL || this->cellType[nr3_u - n] != AIR_CELL;
-
-            const float valid0v = this->cellType[nr0_v] != AIR_CELL || this->cellType[nr0_v - 1] != AIR_CELL;
-            const float valid1v = this->cellType[nr1_v] != AIR_CELL || this->cellType[nr1_v - 1] != AIR_CELL;
-            const float valid2v = this->cellType[nr2_v] != AIR_CELL || this->cellType[nr2_v - 1] != AIR_CELL;
-            const float valid3v = this->cellType[nr3_v] != AIR_CELL || this->cellType[nr3_v - 1] != AIR_CELL;
-
-            const float divX = valid0u * d0_u + valid1u * d1_u + valid2u * d2_u + valid3u * d3_u;
-            const float divY = valid0v * d0_v + valid1v * d1_v + valid2v * d2_v + valid3v * d3_v;
-
-            float picV;
-            float corr;
-            float flipV;
-
-            if (divX > 0.f) {
-                picV = (valid0u * d0_u * this->u[nr0_u] + valid1u * d1_u * this->u[nr1_u] + valid2u * d2_u * this->u[nr2_u] + valid3u * d3_u * this->u[nr3_u]) / divX;
-
-                corr = (valid0u * d0_u * (this->u[nr0_u] - this->prevU[nr0_u]) + valid1u * d1_u * (this->u[nr1_u] - this->prevU[nr1_u]) + valid2u * d2_u * (this->u[nr2_u] - this->prevU[nr2_u]) + valid3u * d3_u * (this->u[nr3_u] - this->prevU[nr3_u])) / divX;
-                flipV = pvx + corr;
-                this->velocities[ui] = (1.f - flipRatio) * picV + flipRatio * flipV;
-            }
-
-            if (divY > 0.f) {
-                picV = (valid0v * d0_v * this->v[nr0_v] + valid1v * d1_v * this->v[nr1_v] + valid2v * d2_v * this->v[nr2_v] + valid3v * d3_v * this->v[nr3_v]) / divY;
-
-                corr = (valid0v * d0_v * (this->v[nr0_v] - this->prevV[nr0_v]) + valid1v * d1_v * (this->v[nr1_v] - this->prevV[nr1_v]) + valid2v * d2_v * (this->v[nr2_v] - this->prevV[nr2_v]) + valid3v * d3_v * (this->v[nr3_v] - this->prevV[nr3_v])) / divY;
-                flipV = pvy + corr;
-                this->velocities[vi] = (1.f - flipRatio) * picV + flipRatio * flipV;
-            }
-        }
-    }
-
-    void transferToParticles() {
-
-        const int32_t numThreads = thread_pool.m_thread_count;
-        const int32_t numParticlesPerThread = numParticles / numThreads;
-        const int32_t numMissedParticles = numParticles - numParticlesPerThread * numThreads;
-
-        // u and v grids are staggered, so make sure that you subtract half cell spacing from particle y positions when transferring this->u to particles and vice versa for this->v
-
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->transferToParticle(i * numParticlesPerThread, i * numParticlesPerThread + numParticlesPerThread);
-            });
-        }
-
-        this->transferToParticle(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void transferToUGridCells(int idx) {
-        const auto cell = cellOccupantsGrid.data[idx];
-    
-        for (uint32_t id{0}; id < cell.objects_count; ++id) {
-            const uint32_t particleIndex = cell.objects[id];
-
-            const int32_t ui = 2 * particleIndex;
-            const int32_t vi = 2 * particleIndex + 1;
-            const int32_t nr0_u = nr0[ui];
-            const int32_t nr1_u = nr1[ui];
-            const int32_t nr2_u = nr2[ui];
-            const int32_t nr3_u = nr3[ui];
-
-            const float d0_u = d0[ui];
-            const float d1_u = d1[ui];
-            const float d2_u = d2[ui];
-            const float d3_u = d3[ui];
-
-            const float pvx = this->velocities[ui];
-            const float pvy = this->velocities[vi];
-           
-            this->u[nr0_u] += pvx * d0_u;  
-            this->u[nr1_u] += pvx * d1_u;
-            this->u[nr2_u] += pvx * d2_u;
-            this->u[nr3_u] += pvx * d3_u;
-
-            this->du[nr0_u] += d0_u;
-            this->du[nr1_u] += d1_u;
-            this->du[nr2_u] += d2_u;
-            this->du[nr3_u] += d3_u;
-        }
-    }
-
-    void transferToUGrid(int start, int end) {
-
-        for (int i = start; i < end; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-                transferToUGridCells(idx);
-            }
-        }
-    }
-
-    void transferToVGridCells(int idx) {
-        const auto cell = cellOccupantsGrid.data[idx];
-    
-        for (uint32_t id{0}; id < cell.objects_count; ++id) {
-            const uint32_t particleIndex = cell.objects[id];
-
-            const int32_t ui = 2 * particleIndex;
-            const int32_t vi = 2 * particleIndex + 1;
-            const int32_t nr0_v = nr0[vi];
-            const int32_t nr1_v = nr1[vi];
-            const int32_t nr2_v = nr2[vi];
-            const int32_t nr3_v = nr3[vi];
-
-            const float d0_v = d0[vi];
-            const float d1_v = d1[vi];
-            const float d2_v = d2[vi];
-            const float d3_v = d3[vi];
-
-            const float pvx = this->velocities[ui];
-            const float pvy = this->velocities[vi];
-    
-            this->v[nr0_v] += pvy * d0_v;  
-            this->v[nr1_v] += pvy * d1_v;
-            this->v[nr2_v] += pvy * d2_v;
-            this->v[nr3_v] += pvy * d3_v;
-
-            this->dv[nr0_v] += d0_v;
-            this->dv[nr1_v] += d1_v;
-            this->dv[nr2_v] += d2_v;
-            this->dv[nr3_v] += d3_v;
-        }
-    }
-
-    void transferToVGrid(int start, int end) {
-
-        for (int i = start; i < end; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-                transferToVGridCells(idx);
-            }
-        }
-    }
-
-    void transferToGrid() {
-
-        const int32_t halfNumRemainingThreads = numThreads > 3 ? (numThreads - 2) / 2 : 1;
-        const int32_t numColumnsPerThread = (numX - 2) / halfNumRemainingThreads;
-        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * halfNumRemainingThreads;
-
-        for (int i = 0; i < halfNumRemainingThreads; ++i) {
-            int start = i * numColumnsPerThread;
-            int end = (i == halfNumRemainingThreads - 1) ? (numX - 1) : (start + numColumnsPerThread);
-            thread_pool.addTask([&, start, end]() {
-                this->transferToUGrid(start, end);
-            });
-            thread_pool.addTask([&, start, end]() {
-                this->transferToVGrid(start, end);
-            });
-        }
-
-        thread_pool.waitForCompletion();
-
-
-        for (int i = 0; i < this->u.size(); ++i) {
-            float prevNode = this->du[i];
-            if (prevNode > 0.f) {
-                this->u[i] /= prevNode;
-            }
-        }
-        for (int i = 0; i < this->v.size(); ++i) {
-            float prevNode = this->dv[i];
-            if (prevNode > 0.f) {
-                this->v[i] /= prevNode;
-            }
-        }
-    }
-
     void updateParticleDensity() {
 
-        std::fill(begin(this->particleDensity), end(this->particleDensity), 0.f);
+        std::fill(begin(fluid_attributes.cellDensities), end(fluid_attributes.cellDensities), 0.f);
 
-        for (int i = 0; i < numParticles; ++i) {
-            float x = this->positions[2 * i];
-            float y = this->positions[2 * i + 1];
+        for (int i = 0; i < fluid_attributes.num_particles; ++i) {
+            float x = fluid_attributes.positions[2 * i];
+            float y = fluid_attributes.positions[2 * i + 1];
 
-            x = this->clamp(x, cellSpacing, (this->numX - 1) * cellSpacing);
-            y = this->clamp(y, cellSpacing, (this->numY - 1) * cellSpacing);
+            x = this->clamp(x, fluid_attributes.cellSpacing, (this->numX - 1) * fluid_attributes.cellSpacing);
+            y = this->clamp(y, fluid_attributes.cellSpacing, (this->numY - 1) * fluid_attributes.cellSpacing);
 
             int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), this->numX - 2));
-            float tx = ((x - halfSpacing) - x0 * cellSpacing) * invSpacing;
+            float tx = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
             int x1 = std::min(x0 + 1, this->numX - 1);
 
             int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), this->numY - 2));
-            float ty = ((y - halfSpacing) - y0 * cellSpacing) * invSpacing;
+            float ty = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
             int y1 = std::min(y0 + 1, this->numY - 2);
            
             float sx = 1.f - tx;
             float sy = 1.f - ty;
 
             if (x0 < this->numX && y0 < this->numY) {
-                this->particleDensity[x0 * n + y0] += sx * sy;
+                fluid_attributes.cellDensities[x0 * n + y0] += sx * sy;
             }
             if (x1 < this->numX && y0 < this->numY) {
-                this->particleDensity[x1 * n + y0] += tx * sy;
+                fluid_attributes.cellDensities[x1 * n + y0] += tx * sy;
             }
             if (x1 < this->numX && y1 < this->numY) {
-                this->particleDensity[x1 * n + y1] += tx * ty;
+                fluid_attributes.cellDensities[x1 * n + y1] += tx * ty;
             }
             if (x0 < this->numX && y1 < this->numY) {
-                this->particleDensity[x0 * n + y1] += sx * ty;
+                fluid_attributes.cellDensities[x0 * n + y1] += sx * ty;
             }
         }
 
-        if (this->particleRestDensity == 0.f) {
+        if (fluid_attributes.particleRestDensity == 0.f) {
             float sum = 0.f;
             int numFluidCells = 0;
 
-            for (int i = 0; i < this->numCells; ++i) {
-                if (this->cellType[i] == FLUID_CELL) {
-                    sum += this->particleDensity[i];
+            for (int i = 0; i < fluid_attributes.gridSize; ++i) {
+                if (fluid_attributes.cellType[i] == FLUID_CELL) {
+                    sum += fluid_attributes.cellDensities[i];
                     numFluidCells++;
                 }
             }
 
             if (numFluidCells > 0) {
-                this->particleRestDensity = sum / numFluidCells;
-            }
-        }
-    }
-
-    void setUpResidual() {
-        double scale = 1.0 / cellSpacing;
-
-        std::fill(begin(residual), end(residual), 0.0);
-
-        for (int32_t i = 1; i < numX - 1; ++i) {
-            for (int32_t j = 1; j < numY - 1; ++j) {
-                int32_t idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL)  {
-                    continue;
-                }
-
-                float divergence = -(this->u[idx + n] - this->u[idx] + this->v[idx + 1] - this->v[idx]);
-
-                if (this->particleRestDensity > 0.f) {
-                    float compression = this->particleDensity[idx] - this->particleRestDensity;
-                    divergence += (compression > 0.f) * this->k * compression;
-                }
-
-                residual[idx] = divergence;
-
-            }
-        }
-    }
-
-    void ScaledAdd(std::vector<double>& a, std::vector<double>& b, double c) {
-        for (int i = 0; i < numX * numY; ++i) {
-            if (cellType[i] == FLUID_CELL) {
-                a[i] += b[i] * c;
-            }
-        }
-    }
-
-    double DotMulti(std::vector<double> *a, std::vector<double> *b) {
-        const int32_t numThreads_ = 1;
-        const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
-        const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
-
-        std::fill(begin(dotProducts), end(dotProducts), 0.0);
-
-        for (int i = 0; i < numThreads_; ++i) {
-            int start = i * numColumnsPerThread;
-            int end = (i == numThreads_ - 1) ? (numX * numY) : (start + numColumnsPerThread);
-            thread_pool.addTask([&, i, start, end]() {
-                this->Dot(a, b, start, end, dotProducts[i]);
-            });
-        }
-
-        thread_pool.waitForCompletion();
-
-        double res = 0.0;
-        for (double el : dotProducts) {
-            res += el;
-        }
-
-        return res;
-    }
-
-    void Dot(std::vector<double> *a, std::vector<double> *b, int start, int end, double& res) {
-        for (int i = start; i < end; ++i) {
-            if (cellType[i] == FLUID_CELL) {
-                res += (*a)[i] * (*b)[i];
-            }
-        }
-    }
-
-    void EqualsPlusTimesMulti(std::vector<double> *a, std::vector<double> *b, double c) {
-        const int32_t numThreads_ = 1;
-        const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
-        const int32_t numMissedColumns = numX * numY - numColumnsPerThread * numThreads_;
-
-        for (int i = 0; i < numThreads_; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->EqualsPlusTimes(a, b, c, i * numColumnsPerThread, i * numColumnsPerThread + numColumnsPerThread);
-            });
-        }
-
-        this->EqualsPlusTimes(a, b, c, numX * numY - numMissedColumns, numX * numY);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void EqualsPlusTimes(std::vector<double> *a, std::vector<double> *b, double c, int start, int end) {
-        for (int i = start; i < end; ++i) {
-            if (cellType[i] == FLUID_CELL) {
-                (*a)[i] = (*b)[i] + (*a)[i] * c;
-            }
-        }
-    }
-
-    void applyPressureMulti() {
-        const int32_t numThreads_ = 1;
-        const int32_t numColumnsPerThread = (numX - 2) / numThreads_;
-        const int32_t numMissedColumns = (numX - 2) - numColumnsPerThread * numThreads_;
-
-        for (int i = 0; i < numThreads_; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->applyPressure(1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
-            });
-        }
-
-        this->applyPressure(numX - 1 - numMissedColumns, numX - 1);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void applyPressure(int start, int end) {
-        //const float density = 1000.f;
-        //const float scale = dt / (density * cellSpacing);
-    
-        for (int i = start; i < end; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-                int leftIdx =  idx - n;
-                int upIdx = idx - 1;
-
-                if ((cellType[idx] == FLUID_CELL || cellType[leftIdx] == FLUID_CELL) &&
-                    cellType[idx] != SOLID_CELL && cellType[leftIdx] != SOLID_CELL) {
-                    float p = pressure[idx];
-                    float pLeft = pressure[leftIdx];
-                    u[idx] -= 1 * (p - pLeft);
-                }
-    
-                if ((cellType[idx] == FLUID_CELL || cellType[upIdx] == FLUID_CELL) &&
-                    cellType[idx] != SOLID_CELL && cellType[upIdx] != SOLID_CELL) {
-                    float p = pressure[idx];
-                    float pTop = pressure[upIdx];
-                    v[idx] -= 1 * (p - pTop);
-                }
-            }
-        }
-    }
-
-    void setUpA() {
-        float scale = 1;//dt / (cellSpacing * cellSpacing); // also see what happens when you divide by 1000 (density of water) as well
-
-        std::fill(Adiag.begin(), Adiag.end(), 0.0);
-
-        // Ax[i] is the cell to the right, Ay[i] is the cell below
-        std::fill(si.begin(), si.end(), 0.0);
-        std::fill(li.begin(), li.end(), 0.0);
-
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-
-                if (cellType[idx] != FLUID_CELL) continue;
-
-                int left = cellType[idx - n];
-                int right = cellType[idx + n];
-                int bottom = cellType[idx + 1];
-                int top = cellType[idx - 1];
-
-                if (left == FLUID_CELL || left == AIR_CELL) { 
-                    Adiag[idx] += scale;
-                }
-
-                if (right == FLUID_CELL) {
-                    Adiag[idx] += scale;
-                    li[idx] = -scale;
-                }
-                else if (right == AIR_CELL) {
-                    Adiag[idx] += scale;
-                }
-
-                if (top == FLUID_CELL || top == AIR_CELL) { 
-                    Adiag[idx] += scale;
-                }
-
-                if (bottom == FLUID_CELL) {
-                    Adiag[idx] += scale;
-                    si[idx] = -scale;
-                }
-                else if (bottom == AIR_CELL) {
-                    Adiag[idx] += scale;
-                }
-            }
-        }
-    }
-
-    void buildPreconditioner() {
-        const double tau = 0.97;
-        const double sigma = 0.25;
-
-        for (int i = 1; i < numX - 1; ++i) { // I call this the level iteration. Every time j increases, we are at the next level iteration
-            for (int j = 1; j < numY - 1; ++j) { // and this is the swipe iteration. Every time i increases, we are at the next swipe iteration
-                int idx = i * n + j;
-
-                if (cellType[idx] != FLUID_CELL) continue;
-
-                double e = Adiag[idx];
-
-                // si is short for swipe iteration, just some slang for you new gens
-                    // si[index] = 0 if the cell in the next swipe iteration touching the current is not fluid, else si[index] = -1
-
-                // li is short for level iteration, try and keep up with the slang
-                    // li[index] = 0 if the cell in the next level iteration touching the current cell is not fluid, else li[index] = -1
-
-                // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration
-                // same for level iteration, denoted with L
-
-                // if cell - S is fluid, then do: (si - S) * (precon - S), and (li - S) * (precon - S)
-                if (cellType[idx - 1] == FLUID_CELL) {
-                    double px = si[idx - 1] * precon[idx - 1];
-                    double py = li[idx - 1] * precon[idx - 1];
-                    e -= (px * px + tau * px * py);
-                }
-
-                // if cell - L is fluid, then do: (si - L) * (precon - L), and (li - L) * (precon - L)
-                if (cellType[idx - n] == FLUID_CELL) {
-                    double px = si[idx - n] * precon[idx - n];
-                    double py = li[idx - n] * precon[idx - n];
-                    e -= (py * py + tau * px * py);
-                }
-
-                if (e < sigma * Adiag[idx]) {
-                    e = Adiag[idx];
-                }
-
-                // don't encase a small amount of fluid cells within solids, it messes with the preconditioner. But only modifying it only if e is big enough patches up the problem
-                if (e * e > 1e-18) {
-                    precon[idx] = 1.0 / std::sqrt(e);
-                }
-            }
-        }
-    }
-
-    void applyPreconditioner(std::vector<double> *dst, std::vector<double> *a) {
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int32_t idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL) continue;
-
-                double t = (*a)[idx];
-
-                // if cell - S is fluid, then do: (si - S) * (precon - S) * (dst - S)
-                if (cellType[idx - 1] == FLUID_CELL) {
-                    t -= si[idx - 1] * precon[idx - 1] * (*dst)[idx - 1];
-                }
-
-                // if cell - L is fluid, then do: (si - L) * (precon - L) * (dst - L)
-                if (cellType[idx - n] == FLUID_CELL) {
-                    t -= li[idx - n] * precon[idx - n] * (*dst)[idx - n];
-                }
-
-                (*dst)[idx] = t * precon[idx];
-            }
-        }
-
-        for (int i = numX - 2; i > 0; --i) {
-            for (int j = numY - 2; j > 0; --j) {
-                int32_t idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL) continue;
-
-                double t = (*dst)[idx];
-
-                // if cell + S is fluid, then do: (si) * (precon) * (dst + S)
-                if (cellType[idx + 1] == FLUID_CELL) {
-                    t -= si[idx] * precon[idx] * (*dst)[idx + 1];
-                }
-
-                // if cell + L is fluid, then do: (li) * (precon) * (dst + L)
-                if (cellType[idx + n] == FLUID_CELL) {
-                    t -= li[idx] * precon[idx] * (*dst)[idx + n];
-                }
-
-                (*dst)[idx] = t * precon[idx];
-            }
-        }
-    }
-
-    void matVec(std::vector<double> *dst, std::vector<double> *b) {
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int32_t idx = i * n + j;
-                
-                double t = Adiag[idx] * (*b)[idx];
-
-                // (si - S) * (b - S)
-                t += si[idx - 1] * (*b)[idx - 1];
-
-                // (li - L) * (b - L)
-                t += li[idx - n] * (*b)[idx - n];
-
-                // (si) * (b + S)
-                t += si[idx] * (*b)[idx + 1];
-
-                // (li) * (b + L)
-                t += li[idx] * (*b)[idx + n];
-
-                (*dst)[idx] = t;
-            }
-        }
-    }
-
-    void PCGproject() {
-
-        std::fill(begin(this->p), end(this->p), 0.f);
-
-        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
-        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
-
-        std::fill(begin(pressure), end(pressure), 0.f);
-
-        setUpResidual();
-        setUpA();
-        buildPreconditioner();
-        applyPreconditioner(&z, &residual);
-        std::copy(begin(z), end(z), begin(search));
-
-        // DotMulti needs to be debugged, EqualsPlusTimesMulti good
-
-        /*double sigma = 0.0;
-        Dot(&z, &residual, 0, numX * numY, sigma);*/
-        auto start = std::chrono::high_resolution_clock::now();
-
-        double sigma = DotMulti(&z, &residual);
-
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-        addValueToAverage(DotTime, duration.count());
-
-        for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
-            matVec(&z, &search);
-
-            //double denom = 0.0;
-            //Dot(&z, &search, 0, numX * numY, denom);
-            //double alpha = sigma / denom;
-
-            double alpha = sigma / DotMulti(&z, &search);
-
-            start = std::chrono::high_resolution_clock::now();
-            ScaledAdd(pressure, search, alpha);
-            end = std::chrono::high_resolution_clock::now();
-            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-            addValueToAverage(scaledAddTime, duration.count());
-
-            ScaledAdd(residual, z, -alpha);
-
-            start = std::chrono::high_resolution_clock::now();
-            applyPreconditioner(&z, &residual);
-            end = std::chrono::high_resolution_clock::now();
-            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-            addValueToAverage(preconditioningTime, duration.count());
-
-            //double sigmaNew = 0.0;
-            //Dot(&z, &residual, 0, numX * numY, sigmaNew);
-
-            double sigmaNew = DotMulti(&z, &residual);
-            
-            start = std::chrono::high_resolution_clock::now();
-            EqualsPlusTimesMulti(&search, &z, sigmaNew / sigma);
-            end = std::chrono::high_resolution_clock::now();
-            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-            addValueToAverage(EqualsPlusTime, duration.count());
-
-            sigma = sigmaNew;
-        }
-
-        applyPressureMulti();
-    }
-
-    void SORproject() {
-        std::fill(begin(this->p), end(this->p), 0.f);
-
-        std::copy(std::begin(this->u), std::end(this->u), std::begin(this->prevU));
-        std::copy(std::begin(this->v), std::end(this->v), std::begin(this->prevV));
-
-        std::fill(begin(pressure), end(pressure), 0.f);
-
-        for (int iter = 0; iter < numPressureIters; ++iter) {
-            for (int i = 1; i < this->numX - 1; ++i) {
-                for (int j = 1; j < this->numY - 1; ++j) {
-                    if (this->cellType[i * n + j] != FLUID_CELL) continue;
-
-                    float leftType = cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
-                    float rightType = cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
-                    float topType = cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
-                    float bottomType = cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
-
-                    float divideBy = leftType + rightType + topType + bottomType;
-                    if (divideBy == 0.f) continue;
-
-                    float divergence = this->u[(i + 1) * n + j] - this->u[i * n + j] + this->v[i * n + j + 1] - this->v[i * n + j];
-
-                    if (this->particleRestDensity > 0.f) {
-                        float compression = this->particleDensity[i * n + j] - this->particleRestDensity;
-                        if (compression > 0.f) {
-                            divergence -= k * compression;
-                        }
-                    }
-
-                    float p = divergence / divideBy;
-                    p *= overRelaxation;
-
-                    this->u[i * n + j] += leftType * p;
-                    this->u[(i + 1) * n + j] -= rightType * p;
-                    this->v[i * n + j] += topType * p;
-                    this->v[i * n + j + 1] -= bottomType * p;
-                }
+                fluid_attributes.particleRestDensity = sum / numFluidCells;
             }
         }
     }
 
     float curl(int i, int j) {
         const int32_t n = this->numY;
-        const float denom = 1.f / (2.f * cellSpacing);
-        const int32_t leftType = cellType[(i - 1) * n + j] == FLUID_CELL;
-        const int32_t rightType = cellType[(i + 1) * n + j] == FLUID_CELL;
-        const int32_t topType = cellType[i * n + j - 1] == FLUID_CELL;
-        const int32_t bottomType = cellType[i * n + j + 1] == FLUID_CELL;
+        const float denom = 1.f / (2.f * fluid_attributes.cellSpacing);
+        const int32_t leftType = fluid_attributes.cellType[(i - 1) * n + j] == FLUID_CELL;
+        const int32_t rightType = fluid_attributes.cellType[(i + 1) * n + j] == FLUID_CELL;
+        const int32_t topType = fluid_attributes.cellType[i * n + j - 1] == FLUID_CELL;
+        const int32_t bottomType = fluid_attributes.cellType[i * n + j + 1] == FLUID_CELL;
         if (!leftType || !rightType || !topType || !bottomType) {
             return 0.f;
         }
-        return ((this->v[(i + 1) * n + j] * bottomType - this->v[(i - 1) * n + j] * topType) - (this->u[i * n + j + 1] * rightType - this->u[i * n + j - 1] * leftType)) * denom;
+        return ((fluid_attributes.v[(i + 1) * n + j] * bottomType - fluid_attributes.v[(i - 1) * n + j] * topType) - (fluid_attributes.u[i * n + j + 1] * rightType - fluid_attributes.u[i * n + j - 1] * leftType)) * denom;
     }
 
-    float calcVorticitySquared(int i, int j) {
+    float calcVorticity(int i, int j) {
         float curl = this->curl(i, j);
         return std::abs(curl);// * curl;
     }
@@ -1823,76 +817,79 @@ public:
 
                 const float c = curl(i, j);
 
-                this->v[i * n + j] += c * dx * dt * vorticityStrength;
-                this->u[i * n + j] += c * dy * dt * vorticityStrength;
+                fluid_attributes.v[i * n + j] += c * dx * dt * fluid_attributes.vorticityStrength;
+                fluid_attributes.u[i * n + j] += c * dy * dt * fluid_attributes.vorticityStrength;
             }
         }
     }
 
     void applyVorticityConfinementRedBlack() {
-        const int32_t numThreads = thread_pool.m_thread_count;
-        const int32_t numColumnsPerThread = (numX - 2) / numThreads;
-        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * numThreads;
+        const int32_t numColumnsPerThread = (numX - 2) / fluid_attributes.numThreads;
+        const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * fluid_attributes.numThreads;
 
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
+        for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+            fluid_attributes.thread_pool.addTask([&, i]() {
                 this->calcVorticityConfinement(true, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
             });
         }
 
         this->calcVorticityConfinement(true, numX - 1 - numMissedColumns, numX - 1);
 
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.waitForCompletion();
 
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
+        for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+            fluid_attributes.thread_pool.addTask([&, i]() {
                 this->calcVorticityConfinement(false, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
             });
         }
 
         this->calcVorticityConfinement(false, numX - 1 - numMissedColumns, numX - 1);
 
-        thread_pool.waitForCompletion();
+        fluid_attributes.thread_pool.waitForCompletion();
     }
 
     void includeRigidObject(const bool mouseDown, const bool justPressed) {
-        const float extend = 20 * cellSpacing;
+        const float extend = 20 * fluid_attributes.cellSpacing;
         if (mouseDown) {
             float vx = (objectX - objectPrevX) * 100;
             float vy = (objectY - objectPrevY) * 100;
             for (int i = 1; i < numX - 1; i++) {
                 for (int j = 1; j < numY - 1; j++) {
                     int cellNr = i * n + j;
-                    if (cellType[i * n + j] == SOLID_CELL) continue;
-                    float dx = (i + 0.5) * cellSpacing - objectX;
-                    float dy = (j + 0.5) * cellSpacing - objectY;
+                    if (fluid_attributes.cellType[i * n + j] == SOLID_CELL) continue;
+                    float dx = (i + 0.5) * fluid_attributes.cellSpacing - objectX;
+                    float dy = (j + 0.5) * fluid_attributes.cellSpacing - objectY;
 
                     if (dx * dx + dy * dy < objectRadius * objectRadius + extend) {
-                        cellType[i * n + j] = FLUID_CELL;
-
-                        this->cellColor[3 * cellNr] = 0;
-                        this->cellColor[3 * cellNr + 1] = 150;
-                        this->cellColor[3 * cellNr + 2] = 255;
-
-                        this->u[cellNr] = vx;
-                        this->u[cellNr + n] = vx;
-                        this->v[cellNr] = vy;
-                        this->v[cellNr + 1] = vy;
+                        //fluid_attributes.cellType[i * n + j] = FLUID_CELL;
+                        
+                        if (fluid_attributes.cellType[cellNr - n] != SOLID_CELL) {
+                            fluid_attributes.u[cellNr] = vx;
+                        }
+                        if (fluid_attributes.cellType[cellNr + n] != SOLID_CELL) {
+                            fluid_attributes.u[cellNr + n] = vx;
+                        }
+                        if (fluid_attributes.cellType[cellNr - 1] != SOLID_CELL) {
+                            fluid_attributes.v[cellNr] = vy;
+                        }
+                        if (fluid_attributes.cellType[cellNr + 1] != SOLID_CELL) {
+                            fluid_attributes.v[cellNr + 1] = vy;
+                        }
                     }
                 }
             }
             objectPrevX = objectX;
             objectPrevY = objectY;
-            objectX = std::max(cellSpacing + objectRadius, std::min(mouseX, WIDTH - cellSpacing - objectRadius));
-            objectY = std::max(cellSpacing + objectRadius, std::min(mouseY, HEIGHT - cellSpacing - objectRadius));
+            objectX = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(mouseX, fluid_attributes.WIDTH - fluid_attributes.cellSpacing - objectRadius));
+            objectY = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(mouseY, fluid_attributes.HEIGHT - fluid_attributes.cellSpacing - objectRadius));
             if (justPressed) {
                 objectPrevX = objectX;
                 objectPrevY = objectY;
             }
         }
         else {
-            objectX = std::max(cellSpacing + objectRadius, std::min(objectX, WIDTH - cellSpacing - objectRadius));
-            objectY = std::max(cellSpacing + objectRadius, std::min(objectY, HEIGHT - cellSpacing - objectRadius));
+            objectX = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(objectX, fluid_attributes.WIDTH - fluid_attributes.cellSpacing - objectRadius));
+            objectY = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(objectY, fluid_attributes.HEIGHT - fluid_attributes.cellSpacing - objectRadius));
             objectPrevX = objectX;
             objectPrevY = objectY;
         }
@@ -1904,107 +901,111 @@ public:
     }
 
     void generate() {
-        float separation = radius / separationInit;
-        int wideNum = std::floor((2 * generatorRadius) / (radius * separation));
+        float separation = radius * 2.1;
+        int wideNum = std::floor((2 * generatorRadius) / (separation));
         int highNum = wideNum;
-        int numAdded = wideNum * highNum;
+        int numPotentiallyAdded = wideNum * highNum;
 
-        float starting_px = mouseX - generatorRadius + radius;
-        float starting_py = mouseY - generatorRadius + radius;
+        float generatorRightBound = mouseX + generatorRadius;
+        float generatorBottomBound = mouseY + generatorRadius;
+
+        float starting_px = std::max(mouseX - generatorRadius + radius, fluid_attributes.cellSpacing + radius);
+        float starting_py = std::max(mouseY - generatorRadius + radius, fluid_attributes.cellSpacing + radius);
         float px = starting_px;
         float py = starting_py;
         bool offset = true;
 
-        std::vector<float> addToPositions;
+        fluid_attributes.positions.resize(2 * (fluid_attributes.num_particles + numPotentiallyAdded));
+        int addedTo = 0;
 
-        for (int i = 0; i < numAdded; ++i) {
-            int cellX = px / cellSpacing;
-            int cellY = py / cellSpacing;
-            int cellNr = cellX * n + cellY;
+        for (int i = 0; i < numPotentiallyAdded; ++i) {
             float prevPx = px;
             float prevPy = py;
+            if (prevPy > generatorBottomBound || prevPy + radius > fluid_attributes.HEIGHT - fluid_attributes.cellSpacing) {
+                break;
+            }
 
-            px += this->radius * separation;
-            if ((i + 1) % wideNum == 0) {
+            int cellX = px / fluid_attributes.cellSpacing;
+            int cellY = py / fluid_attributes.cellSpacing;
+            int cellNr = cellX * n + cellY;
+
+            px += separation;
+            if (px > generatorRightBound) {
                 px = starting_px;
-                if (offset) {
-                    px += this->radius * separation;
-                }
-                py += this->radius * separation;
+                /*if (offset) {
+                    px += 0.5 * separation;
+                }*/
+                py += separation;
                 offset = !offset;
             }
 
-            if (cellType[cellNr] != AIR_CELL || px - radius < 0 || px + radius > WIDTH || py - radius < 0 || py + radius > HEIGHT) {
+            if (fluid_attributes.cellType[cellNr] != AIR_CELL || prevPx - radius < fluid_attributes.cellSpacing || prevPx + radius > fluid_attributes.WIDTH - fluid_attributes.cellSpacing || prevPy - radius < fluid_attributes.cellSpacing) {
                 continue;
             }
 
-            addToPositions.push_back(prevPx);
-            addToPositions.push_back(prevPy);
+            fluid_attributes.positions[2 * (fluid_attributes.num_particles + addedTo)] = prevPx;
+            fluid_attributes.positions[2 * (fluid_attributes.num_particles + addedTo) + 1] = prevPy;
+
+            addedTo++;
         }
 
-        int addedTo = addToPositions.size() / 2;
+        fluid_attributes.num_particles += addedTo;
 
-        numParticles += addedTo;
+        fluid_attributes.positions.resize(2 * fluid_attributes.num_particles);
+        fluid_attributes.velocities.resize(2 * fluid_attributes.num_particles);
+        fluid_renderer.particleColors.resize(3 * fluid_attributes.num_particles);
+        fluid_renderer.va.resize(4 * fluid_attributes.num_particles);
 
-        this->positions.resize(2 * numParticles);
-        this->velocities.resize(2 * numParticles);
-        this->particleColors.resize(3 * numParticles);
-        this->va.resize(4 * numParticles);
+        int start = fluid_attributes.num_particles - addedTo;
 
-        int start = numParticles - addedTo;
-
-        for (int i = start; i < numParticles; i++) {
+        for (int i = start; i < fluid_attributes.num_particles; i++) {
             int idx1 = 2 * i;
             int idx2 = 3 * i;
             int idx3 = 4 * i;
-            int idx4 = i - start;
 
-            positions[idx1] = addToPositions[idx4 * 2];
-            positions[idx1 + 1] = addToPositions[idx4 * 2 + 1];
-            
-            velocities[idx1] = 0.f;
-            velocities[idx1 + 1] = 0.f;
+            fluid_attributes.velocities[idx1] = 0.f;
+            fluid_attributes.velocities[idx1 + 1] = 0.f;
 
-            particleColors[idx2] = 255;
-            particleColors[idx2 + 1] = 255;
-            particleColors[idx2 + 2] = 255;
+            fluid_renderer.particleColors[idx2] = 255;
+            fluid_renderer.particleColors[idx2 + 1] = 255;
+            fluid_renderer.particleColors[idx2 + 2] = 255;
 
-            va[idx3].texCoords = {0.f, 0.f};
-            va[idx3 + 1].texCoords = {textureSizeX, 0.f};
-            va[idx3 + 2].texCoords = {textureSizeX, textureSizeY};
-            va[idx3 + 3].texCoords = {0.f, textureSizeY};
+            fluid_renderer.va[idx3].texCoords = {0.f, 0.f};
+            fluid_renderer.va[idx3 + 1].texCoords = {fluid_renderer.texture_size.x, 0.f};
+            fluid_renderer.va[idx3 + 2].texCoords = {fluid_renderer.texture_size.x, fluid_renderer.texture_size.y};
+            fluid_renderer.va[idx3 + 3].texCoords = {0.f, fluid_renderer.texture_size.y};
         }
 
-        particlesPerThread = numParticles / numThreads;
-        numMissedParticles = numParticles - numThreads * particlesPerThread;
+        fluid_attributes.particlesPerThread = fluid_attributes.num_particles / fluid_attributes.numThreads;
+        fluid_attributes.numMissedParticles = fluid_attributes.num_particles - fluid_attributes.numThreads * fluid_attributes.particlesPerThread;
 
-        this->collisions.resize(numParticles);
-        this->temperatures.resize(numParticles);
+        this->collisions.resize(fluid_attributes.num_particles);
+        fluid_attributes.temperatures.resize(fluid_attributes.num_particles);
 
-        this->nr0.resize(2 * numParticles);
-        this->nr1.resize(2 * numParticles);
-        this->nr2.resize(2 * numParticles);
-        this->nr3.resize(2 * numParticles);
+        transfer_grid.nr0.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.nr1.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.nr2.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.nr3.resize(2 * fluid_attributes.num_particles);
 
-        this->d0.resize(2 * numParticles);
-        this->d1.resize(2 * numParticles);
-        this->d2.resize(2 * numParticles);
-        this->d3.resize(2 * numParticles);
+        transfer_grid.d0.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.d1.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.d2.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
     }
 
     void remove() {
         const int32_t numCovered = std::ceil(generatorRadius / scalingFactor);
         const uint32_t mouseColumn = std::floor(mouseX / scalingFactor);
         const uint32_t mouseRow = std::floor(mouseY / scalingFactor);
-        const size_t double_len = positions.size();
-        const size_t triple_len = particleColors.size();
+        const size_t double_len = fluid_attributes.positions.size();
+        const size_t triple_len = fluid_renderer.particleColors.size();
         const size_t quadruple_len = 2 * double_len;
     
-        size_t vaSize = va.getVertexCount();
-        vaCopy.resize(vaSize);
+        size_t vaSize = fluid_renderer.va.getVertexCount();
+        fluid_renderer.vaCopy.resize(vaSize);
     
         for (int i = 0; i < vaSize; ++i) {
-            vaCopy[i] = va[i];
+            fluid_renderer.vaCopy[i] = fluid_renderer.va[i];
         }
 
         size_t remove = 0;
@@ -2028,20 +1029,20 @@ public:
                     size_t quadrupleremove = 4 * remove;
     
                     if (2 * particleIndex + 2 < double_len) {
-                        positions[doubleid] = positions[double_len - 2 - doubleremove];
-                        positions[doubleid + 1] = positions[double_len - 1 - doubleremove];
+                        fluid_attributes.positions[doubleid] = fluid_attributes.positions[double_len - 2 - doubleremove];
+                        fluid_attributes.positions[doubleid + 1] = fluid_attributes.positions[double_len - 1 - doubleremove];
 
-                        velocities[doubleid] = velocities[double_len - 2 - doubleremove];
-                        velocities[doubleid + 1] = velocities[double_len - 1 - doubleremove];
+                        fluid_attributes.velocities[doubleid] = fluid_attributes.velocities[double_len - 2 - doubleremove];
+                        fluid_attributes.velocities[doubleid + 1] = fluid_attributes.velocities[double_len - 1 - doubleremove];
 
-                        particleColors[tripleid] = particleColors[triple_len - 3 - tripleremove];
-                        particleColors[tripleid + 1] = particleColors[triple_len - 2 - tripleremove];
-                        particleColors[tripleid + 2] = particleColors[triple_len - 1 - tripleremove];
+                        fluid_renderer.particleColors[tripleid] = fluid_renderer.particleColors[triple_len - 3 - tripleremove];
+                        fluid_renderer.particleColors[tripleid + 1] = fluid_renderer.particleColors[triple_len - 2 - tripleremove];
+                        fluid_renderer.particleColors[tripleid + 2] = fluid_renderer.particleColors[triple_len - 1 - tripleremove];
 
-                        vaCopy[quadrupleid] = vaCopy[quadruple_len - 4 - quadrupleremove];
-                        vaCopy[quadrupleid + 1] = vaCopy[quadruple_len - 3 - quadrupleremove];
-                        vaCopy[quadrupleid + 2] = vaCopy[quadruple_len - 2 - quadrupleremove];
-                        vaCopy[quadrupleid + 3] = vaCopy[quadruple_len - 1 - quadrupleremove];
+                        fluid_renderer.vaCopy[quadrupleid] = fluid_renderer.vaCopy[quadruple_len - 4 - quadrupleremove];
+                        fluid_renderer.vaCopy[quadrupleid + 1] = fluid_renderer.vaCopy[quadruple_len - 3 - quadrupleremove];
+                        fluid_renderer.vaCopy[quadrupleid + 2] = fluid_renderer.vaCopy[quadruple_len - 2 - quadrupleremove];
+                        fluid_renderer.vaCopy[quadrupleid + 3] = fluid_renderer.vaCopy[quadruple_len - 1 - quadrupleremove];
                     }
 
                     remove++;
@@ -2049,33 +1050,33 @@ public:
             }
         }
 
-        numParticles -= remove;
+        fluid_attributes.num_particles -= remove;
     
-        this->positions.resize(2 * numParticles);
-        this->velocities.resize(2 * numParticles);
-        this->particleColors.resize(3 * numParticles);
-        this->vaCopy.resize(4 * numParticles);
+        fluid_attributes.positions.resize(2 * fluid_attributes.num_particles);
+        fluid_attributes.velocities.resize(2 * fluid_attributes.num_particles);
+        fluid_renderer.particleColors.resize(3 * fluid_attributes.num_particles);
+        fluid_renderer.vaCopy.resize(4 * fluid_attributes.num_particles);
     
-        va.resize(4 * numParticles);
-        for (int i = 0; i < va.getVertexCount(); ++i) {
-            va[i] = vaCopy[i];
+        fluid_renderer.va.resize(4 * fluid_attributes.num_particles);
+        for (int i = 0; i < vaSize; ++i) {
+            fluid_renderer.va[i] = fluid_renderer.vaCopy[i];
         }
     
-        particlesPerThread = numParticles / numThreads;
-        numMissedParticles = numParticles - numThreads * particlesPerThread;
+        fluid_attributes.particlesPerThread = fluid_attributes.num_particles / fluid_attributes.numThreads;
+        fluid_attributes.numMissedParticles = fluid_attributes.num_particles - fluid_attributes.numThreads * fluid_attributes.particlesPerThread;
     
-        this->collisions.resize(numParticles);
-        this->temperatures.resize(numParticles);
+        this->collisions.resize(fluid_attributes.num_particles);
+        fluid_attributes.temperatures.resize(fluid_attributes.num_particles);
     
-        this->nr0.resize(2 * numParticles);
-        this->nr1.resize(2 * numParticles);
-        this->nr2.resize(2 * numParticles);
-        this->nr3.resize(2 * numParticles);
+        transfer_grid.nr0.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.nr1.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.nr2.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.nr3.resize(2 * fluid_attributes.num_particles);
     
-        this->d0.resize(2 * numParticles);
-        this->d1.resize(2 * numParticles);
-        this->d2.resize(2 * numParticles);
-        this->d3.resize(2 * numParticles);
+        transfer_grid.d0.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.d1.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.d2.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
     }
 
 
@@ -2090,12 +1091,12 @@ public:
     }
 
     void drawPencil(sf::RenderWindow& window) {
-        int localX = static_cast<int>(mouseX / cellSpacing);
-        int localY = static_cast<int>(mouseY / cellSpacing);
+        int localX = static_cast<int>(mouseX / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(mouseY / fluid_attributes.cellSpacing);
         int idx = localX * n + localY;
 
-        float drawPosX = localX * cellSpacing + halfSpacing;
-        float drawPosY = localY * cellSpacing + halfSpacing;
+        float drawPosX = localX * fluid_attributes.cellSpacing + halfSpacing;
+        float drawPosY = localY * fluid_attributes.cellSpacing + halfSpacing;
 
         if (leftMouseDown || !rightMouseDown) {
             pencil.setFillColor(sf::Color(0, 150, 0));
@@ -2107,7 +1108,7 @@ public:
         for (int i = -pencilRadius; i <= pencilRadius; ++i) {
             for (int j = -pencilRadius; j <= pencilRadius; ++j) {
                 if (localX + i > 0 && localY + j > 0 && localX + i < numX - 1 && localY + j < numY - 1) {
-                    pencil.setPosition(drawPosX + i * cellSpacing, drawPosY + j * cellSpacing);
+                    pencil.setPosition(drawPosX + i * fluid_attributes.cellSpacing, drawPosY + j * fluid_attributes.cellSpacing);
                     window.draw(pencil);
                 }
             }
@@ -2119,8 +1120,8 @@ public:
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int idx = i * numY + j;
-                if (cellType[idx] == FLUID_CELL) {
-                    float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
+                if (fluid_attributes.cellType[idx] == FLUID_CELL) {
+                    float div = fabsf(fluid_attributes.u[(i + 1) * n + j] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx]);
 
                     if (div > maxDiv) {
                         maxDiv = div;
@@ -2134,9 +1135,9 @@ public:
         for (int i = 1; i < numX - 1; ++i) {
             for (int j = 1; j < numY - 1; ++j) {
                 int idx = i * n + j;
-                if (cellType[idx] != FLUID_CELL) continue;
-                float div = fabsf(u[(i + 1) * n + j] - u[idx] + v[idx + 1] - v[idx]);
-                cellDrawer.setPosition(i * cellSpacing, j * cellSpacing);
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+                float div = fabsf(fluid_attributes.u[(i + 1) * n + j] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx]);
+                cellDrawer.setPosition(i * fluid_attributes.cellSpacing, j * fluid_attributes.cellSpacing);
 
                 div /= maxDiv;
 
@@ -2149,183 +1150,8 @@ public:
         }
     }
 
-    void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
-        int32_t velGradientSize = velGradient.size() - 1;
-        for (uint32_t index = startIndex; index < endIndex; ++index) {
-            int i = 4 * index;
-            const float px = positions[2 * index];
-            const float py = positions[2 * index + 1];
-
-            va[i].position = {px - radius, py - radius};
-            va[i + 1].position = {px + radius, py - radius};
-            va[i + 2].position = {px + radius, py + radius};
-            va[i + 3].position = {px - radius, py + radius};
-
-            sf::Color color;
-
-            int vel = (int)(velocities[2 * index] * velocities[2 * index] + velocities[2 * index + 1] * velocities[2 * index + 1]) / 15000; 
-            
-            color = sf::Color(velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][0], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][1], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][2], 255);
-
-            va[i].color = color;
-            va[i + 1].color = color;
-            va[i + 2].color = color;
-            va[i + 3].color = color;
-        }
-    }
-
-    void updateVertexArrayVorticity(uint32_t startIndex, uint32_t endIndex) {
-        int32_t vortGradientSize = vortGradient.size() - 1;
-        for (uint32_t index = startIndex; index < endIndex; ++index) {
-            int i = 4 * index;
-            const float px = positions[2 * index];
-            const float py = positions[2 * index + 1];
-
-            va[i].position = {px - radius, py - radius};
-            va[i + 1].position = {px + radius, py - radius};
-            va[i + 2].position = {px + radius, py + radius};
-            va[i + 3].position = {px - radius, py + radius};
-
-            int cellOccupantsX = px / cellSpacing;
-            int cellOccupantsY = py / cellSpacing;
-
-            float vort = static_cast<float>(std::min(255, static_cast<int>(calcVorticitySquared(cellOccupantsX, cellOccupantsY) * 5))); 
-            sf::Color color;
-
-            color = sf::Color(vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][0], vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][1], vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][2], 255);
-
-            va[i].color = color;
-            va[i + 1].color = color;
-            va[i + 2].color = color;
-            va[i + 3].color = color;
-        }
-    }
-
-    void updateVertexArrayDiffusion(const uint32_t startIndex, const uint32_t endIndex) {
-        for (uint32_t index = startIndex; index < endIndex; ++index) {
-            const float s = 0.01f;
-
-            int i = 4 * index;
-            const float px = positions[2 * index];
-            const float py = positions[2 * index + 1];
-
-            va[i].position = {px - radius, py - radius};
-            va[i + 1].position = {px + radius, py - radius};
-            va[i + 2].position = {px + radius, py + radius};
-            va[i + 3].position = {px - radius, py + radius};
-
-            particleColors[3 * index] = clamp(this->particleColors[3 * index] - s, 0, 255);
-            particleColors[3 * index + 1] = clamp(this->particleColors  [3 * index + 1] - s, 0, 255);
-            particleColors[3 * index + 2] = clamp(this->particleColors  [3 * index + 2] + s, 0, 255);
-
-            const int xi = clamp(std::floor(px * invSpacing), 1,    this->numX - 1);
-            const int yi = clamp(std::floor(py * invSpacing), 1,    this->numY - 1);
-            const int cellNr = xi * this->numY + yi;
-
-            const float d0 = this->particleRestDensity;
-
-            if (d0 > 0.f) {
-                const float relDensity = this->particleDensity  [cellNr] / d0;
-                if (relDensity < diffusionRatio) { 
-                    particleColors[3 * index] = 204;
-                    particleColors[3 * index + 1] = 204;
-                    particleColors[3 * index + 2] = 255;
-                }
-            }
-
-            sf::Color color = sf::Color(particleColors[3 * index],  particleColors[3 * index + 1], particleColors[3 * index + 2]);
-
-            va[i].color = color;
-            va[i + 1].color = color;
-            va[i + 2].color = color;
-            va[i + 3].color = color;
-        }
-    }
-
-    void updateVertexArrayTemperature(const uint32_t startIndex, const uint32_t endIndex) {
-        for (uint32_t index = startIndex; index < endIndex; ++index) {
-            int i = 4 * index;
-            const float px = positions[2 * index];
-            const float py = positions[2 * index + 1];
-
-            float temp = temperatures[index];
-
-            if (temp < 30 && fireActive) {
-                temp = 0.f;
-            }
-
-            const int tempRadius = std::min(temp, radius);
-
-            va[i].position = {px - tempRadius, py - tempRadius};
-            va[i + 1].position = {px + tempRadius, py - tempRadius};
-            va[i + 2].position = {px + tempRadius, py + tempRadius};
-            va[i + 3].position = {px - tempRadius, py + tempRadius};
-
-            sf::Color color;
-
-            color = sf::Color(tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][0], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][1], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][2], 255);
-
-            va[i].color = color;
-            va[i + 1].color = color;
-            va[i + 2].color = color;
-            va[i + 3].color = color;
-        }
-    }
-
-    void drawVelocityMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->updateVertexArrayVelocity(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->updateVertexArrayVelocity(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void drawVorticityMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->updateVertexArrayVorticity(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->updateVertexArrayVorticity(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void drawDiffusionMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->updateVertexArrayDiffusion(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->updateVertexArrayDiffusion(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
-    }
-
-    void drawTemperatureMulti() {
-        for (int i = 0; i < numThreads; ++i) {
-            thread_pool.addTask([&, i]() {
-                this->updateVertexArrayTemperature(i * particlesPerThread, i * particlesPerThread + particlesPerThread);
-            });
-        }
-
-        this->updateVertexArrayTemperature(numParticles - numMissedParticles, numParticles);
-
-        thread_pool.waitForCompletion();
-    }
-
     void drawObstacles(sf::RenderWindow& window) {
         window.draw(obstacleVa, obstacleStates);
-    }
-
-    void drawParticlesVertex(sf::RenderWindow& window) {
-        window.draw(va, states);
     }
 
     void addValueToAverage(float& value, float newValue) {
@@ -2333,62 +1159,63 @@ public:
     }
 
     void update(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
-        auto start = std::chrono::high_resolution_clock::now();
+        //auto start = std::chrono::high_resolution_clock::now();
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
         
-        if (!stop || step) {
+        if (!fluid_attributes.stop || fluid_attributes.step) {
             this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
-            step = false;
+            fluid_attributes.step = false;
         }
 
         this->render(window);
 
-        auto end = std::chrono::high_resolution_clock::now();
+        /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        addValueToAverage(SimStepTime, duration.count());
+        addValueToAverage(SimStepTime, duration.count());*/
     }
 
     void simulate(float dt_, bool leftMouseDown_, bool rightMouseDown_, bool justPressed) {
         ++steps;
 
         // order of need of implementation/optimization:
-            // 1) incompressibility -- optimize PCG
-            // 2) implement stable volume correction
-            // 3) updateDensity -- Same idea as to grid
-
-        // collision, rendering, and to particles all great
-        auto start = std::chrono::high_resolution_clock::now();
+            // 1) refactor all this messy code
+            // 2) incompressibility -- implement MGPCG
+            // 2.5) make a sampleVelocity(point) function so that you can do RK2 advection easier
+            // 3) make it so that you pass in static arrays instead of just numbers of particles in the main file
+            // 4) level set & fast sweeping for separattion from obstacles
+            // 5) implement implicit density projection
+            // 6) move divergence view into a vertex array
+            // 7) updateDensity -- Same idea as to grid -- low priority
+        
+        //auto start = std::chrono::high_resolution_clock::now();
 
         dt = dt_;
 
         this->integrateMulti();
 
-        if (fireActive) {
+        if (fluid_attributes.fireActive) {
             std::fill(begin(collisions), end(collisions), 0);
         }
-        auto end = std::chrono::high_resolution_clock::now();
+        /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(miscellaneousTime, duration.count());
-
-        //std::cout << obstaclePositions.size() << ", " << obstacleVa.getVertexCount() << "\n";
+        addValueToAverage(miscellaneousTime, duration.count());*/
 
 
-        start = std::chrono::high_resolution_clock::now();
-
+        //start = std::chrono::high_resolution_clock::now();
         addObjectsToGrids();
 
-        end = std::chrono::high_resolution_clock::now();
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(FillGridTime, duration.count());
+        addValueToAverage(FillGridTime, duration.count());*/
 
         
 
 
-        start = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
         leftMouseDown = leftMouseDown_;
         rightMouseDown = rightMouseDown_;
 
@@ -2413,111 +1240,124 @@ public:
             this->makeForceObjectQueries(1000); // pushing, 1000
         }
 
-        end = std::chrono::high_resolution_clock::now();
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(miscellaneousTime, duration.count());
+        addValueToAverage(miscellaneousTime, duration.count());*/
 
 
         
 
 
-        start = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
         solveCollisions();
         
-        end = std::chrono::high_resolution_clock::now();
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(CollisionTime, duration.count());
+        addValueToAverage(CollisionTime, duration.count());*/
 
 
 
 
 
-        start = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
 
         this->collideSurfacesMulti();
 
         this->constrainWallsMulti();
 
-        end = std::chrono::high_resolution_clock::now();
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ObstacleCollisionTime, duration.count());
+        addValueToAverage(ObstacleCollisionTime, duration.count());*/
 
 
 
 
 
-        start = std::chrono::high_resolution_clock::now();
-        this->transfer(true);
-        end = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
+    
+        transfer_grid.TransferToGrid();
+        
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ToGridTime, duration.count());
+        addValueToAverage(ToGridTime, duration.count());*/
 
 
 
-        start = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
+        
         this->updateParticleDensity();
-        end = std::chrono::high_resolution_clock::now();
+        
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(DensityUpdateTime, duration.count());
+        addValueToAverage(DensityUpdateTime, duration.count());*/
 
 
 
-        start = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
+        
         if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
 
 
-        if (vorticityStrength > 0) {
+        if (fluid_attributes.vorticityStrength != 0) {
             this->applyVorticityConfinementRedBlack();
         }
-        end = std::chrono::high_resolution_clock::now();
+        
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(miscellaneousTime, duration.count());
+        addValueToAverage(miscellaneousTime, duration.count());*/
 
-        start = std::chrono::high_resolution_clock::now();
-        //this->PCGproject();
-        this->SORproject();
-        end = std::chrono::high_resolution_clock::now();
+        
+
+
+        //start = std::chrono::high_resolution_clock::now();
+        
+        pressure_solver.SORproject();
+
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ProjectionTime, duration.count());
+        addValueToAverage(ProjectionTime, duration.count());*/
 
 
 
 
-        start = std::chrono::high_resolution_clock::now();
-        this->transfer(false);
-        end = std::chrono::high_resolution_clock::now();
+        //start = std::chrono::high_resolution_clock::now();
+        
+        transfer_grid.TransferToParticles();
+        
+        /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ToParticlesTime, duration.count());
+        addValueToAverage(ToParticlesTime, duration.count());*/
     }
 
     void render(sf::RenderWindow& window) {
-        auto start = std::chrono::high_resolution_clock::now();
+        //auto start = std::chrono::high_resolution_clock::now();
+        
         //this->drawCells(window);
 
         if (renderPattern == 0) {
-            this->drawDiffusionMulti();
+            fluid_renderer.UpdateVaDiffusionMulti();
         }
 
         else if (renderPattern == 1) {
-            this->drawVelocityMulti();
+            fluid_renderer.UpdateVaVelocityMulti();
         }
 
         else if (renderPattern == 2) {
-            this->drawVorticityMulti();
+            fluid_renderer.UpdateVaVorticityMulti();
         }
 
         else if (renderPattern == 3) {
-            this->drawTemperatureMulti();
+            fluid_renderer.UpdateVaTemperatureMulti();
         }
         else if (renderPattern == 4) {
             this->DrawDivergences(window);
@@ -2526,7 +1366,7 @@ public:
         this->drawObstacles(window);
 
         if (renderPattern != 4) {
-            this->drawParticlesVertex(window);
+            fluid_renderer.DrawParticles();
         }
 
         if (forceObjectActive) {
@@ -2544,10 +1384,10 @@ public:
         }
 
         //this->drawUVGrids(window);
-        auto end = std::chrono::high_resolution_clock::now();
+        /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(RenderingTime, duration.count());
+        addValueToAverage(RenderingTime, duration.count());*/
     }
 
     float getCombinedTime() {
@@ -2627,63 +1467,11 @@ public:
         }
     }
 
-    void addToGravityX(float add) {
-        this->gravityX += add;
-    }
-
-    float getGravityX() {
-        return this->gravityX;
-    }
-
-    void addToGravityY(float add) {
-        this->gravityY += add;
-    }
-
-    float getGravityY() {
-        return this->gravityY;
-    }
-
-    void addToDivergenceModifier(float add) {
-        this->k += add;
-    }
-
-    float getDivergenceModifier() {
-        return this->k;
-    }
-
-    void addToVorticityStrength(float add) {
-        this->vorticityStrength += add;
-    }
-
-    float getVorticityStrength() {
-        return this->vorticityStrength;
-    }
-
-    float getTimeForseparation() {
-        return this->timeForseparation;
-    }
-
-    float getTimeForInc() {
-        return this->timeForIncompressibility;
-    }
-
-    float getTimeForTrans() {
-        return this->timeForTransfer;
-    }
-
     void setNextRenderPattern() {
         this->renderPattern++;
         if (this->renderPattern > 4) {
             this->renderPattern = 0;
         }
-    }
-
-    float getFlipRatio() {
-        return this->flipRatio;
-    }
-
-    void addToFlipRatio(const float add) {
-        this->flipRatio += add;
     }
 
     void setForceObjectActive(bool active) {
@@ -2706,36 +1494,12 @@ public:
         return this->fireActive;
     }
 
-    void addToNumPressureIters(int32_t add) {
-        numPressureIters += add;
-    }
-
-    int32_t getNumPressureIters() {
-        return numPressureIters;
-    }
-
     int getNumX() {
         return this->numX;
     }
 
     int getNumY() {
         return this->numY;
-    }
-
-    bool getStop() {
-        return this->stop;
-    }
-
-    void setStop(bool set) {
-        this->stop = set;
-    }
-
-    bool getStep() {
-        return this->step;
-    }
-
-    void setStep(bool set) {
-        this->step = set;
     }
 
     void setSolidDrawer(bool set) {
@@ -2769,20 +1533,20 @@ public:
             for (int j = 0; j < numY; ++j) {
 
                 // draw u lines (left right)
-                float uX = cellSpacing + i * cellSpacing;
-                float uY = 1.5 * cellSpacing + j * cellSpacing;
+                float uX = fluid_attributes.cellSpacing + i * fluid_attributes.cellSpacing;
+                float uY = 1.5 * fluid_attributes.cellSpacing + j * fluid_attributes.cellSpacing;
                 line[0].position = sf::Vector2f(uX, uY);
                 line[0].color  = sf::Color(255, 150, 0);
-                line[1].position = sf::Vector2f(uX + u[i * n + j], uY);
+                line[1].position = sf::Vector2f(uX + fluid_attributes.u[i * n + j], uY);
                 line[1].color = sf::Color(255, 150, 0);
                 window.draw(line);
 
                 //draw v lines (top bottom)
-                float vX = 1.5 * cellSpacing + i * cellSpacing;
-                float vY = cellSpacing + j * cellSpacing;
+                float vX = 1.5 * fluid_attributes.cellSpacing + i * fluid_attributes.cellSpacing;
+                float vY = fluid_attributes.cellSpacing + j * fluid_attributes.cellSpacing;
                 line[0].position = sf::Vector2f(vX, vY);
                 line[0].color  = sf::Color::Red;
-                line[1].position = sf::Vector2f(vX, vY + v[i * n + j]);
+                line[1].position = sf::Vector2f(vX, vY + fluid_attributes.v[i * n + j]);
                 line[1].color = sf::Color::Red;
                 window.draw(line);
             }
