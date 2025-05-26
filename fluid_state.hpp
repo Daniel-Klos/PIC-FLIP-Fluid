@@ -1,157 +1,279 @@
 #pragma once
 #include <vector>
-#include <cmath>
+#include <numeric>
+#include <iostream>
+#include <SFML/Graphics.hpp>
+#include "fluid_state.hpp"
+#include "general_math.hpp"
 
-#include "thread_pool.hpp"
-
-struct FluidState {
-    int num_particles;
-    std::vector<float> positions;
-    std::vector<float> velocities;
-    std::vector<int> cellType;
-    std::vector<float> u;
-    std::vector<float> v;
-    std::vector<float> du;
-    std::vector<float> dv;
-    std::vector<float> prevU;
-    std::vector<float> prevV;
-    std::vector<float> cellDensities;
-    float cellSpacing;
+struct FluidRenderer {
+    FluidState &fluid_attributes;
+    int n;
     float radius;
-    int numX;
-    int numY;
-    float WIDTH;
-    float HEIGHT;
-    int gridSize;
+    float invSpacing;
 
-    float particleRestDensity;
+    float diffusionRatio = 0.7f;
 
-    float gravityX;
-    float gravityY;
+    sf::RenderWindow &window;
 
-    float vorticityStrength;
-    float flipRatio; // move this to TransferGrid struct
+    sf::VertexArray va{sf::PrimitiveType::Quads};
+    sf::Texture texture;
+    sf::RenderStates states;
+    std::vector<sf::Vertex> vaCopy;
+    sf::Vector2f texture_size;
 
-    bool stop = false;
-    bool step = false; 
+    std::vector<float> particleColors;
+    std::vector<int32_t> collisions;
 
-    bool fireActive = false;
-    std::vector<float> temperatures;
-    float groundConductivity = 100.f;  // how quickly the ground transfers heat to the particles
-    float interConductivity = 25.f;    // how quickly particles transfer heat between themselves
-    float fireStrength = 75.f;         // how quickly particles accelerate upwards due to heat
-    float tempDiffusion = 0.1f;        // how quickly particles lose heat
+    std::array<std::array<int, 3>, 100> velGradient;
+    std::array<std::array<int, 3>, 4> velColorMap{{{0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}}};
 
-    int FLUID_CELL = 0;
-    int AIR_CELL = 1;
-    int SOLID_CELL = 2;
+    std::array<std::array<int, 3>, 100> vortGradient;
+    std::array<std::array<int, 3>, 4> vortColorMap{{{0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
 
-    tp::ThreadPool& thread_pool;
-    int numThreads;
-    int particlesPerThread;
-    int numMissedParticles;
+    std::array<std::array<int, 3>, 100> tempgradient;
+    std::array<std::array<int, 3>, 4> tempMap{{{0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}}};
+        // some nice gradients to put into these colorMaps:
+        // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
+        // night ocean: {0, 51, 102}, {0, 153, 204}, {102, 255, 204}, {255, 255, 255}
+        // sunset: {0, 0, 64}, {128, 0, 128}, {255, 128, 0}, {255, 255, 0}
+        // brighter sunset: {0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
+        // orange to white: {102, 51, 0}, {204, 122, 0}, {255, 153, 51}, {255, 255, 255}
+        // ice: {0, 102, 204}, {173, 216, 230}, {224, 255, 255}, {255, 250, 250}
+        // lava: {128, 0, 0}, {255, 69, 0}, {255, 140, 0}, {255, 215, 0}
+        // deep space: {0, 0, 32}, {64, 0, 128}, {128, 0, 255}, {192, 192, 255}
+        // dark blue orange: {0, 0, 128}, {0, 128, 255}, {255, 128, 0}, {255, 255, 0}
+        // lightning mcqueen: {255, 0, 0}, {255, 69, 0}, {255, 165, 0}, {255, 255, 0}
+        // rainbow: {255, 0, 0}, {255, 255, 0}, {0, 255, 0}, {0, 200, 255} 
 
-    FluidState(int num_particles_, float WIDTH_, float HEIGHT_, int numX_, float vorticityStrength_, float flipRatio_, float gravityX_, float gravityY_, tp::ThreadPool &tp): num_particles(num_particles_), WIDTH(WIDTH_), HEIGHT(HEIGHT_), numX(numX_), vorticityStrength(vorticityStrength_), flipRatio(flipRatio_), gravityX(gravityX_), gravityY(gravityY_), thread_pool(tp) {
+    FluidRenderer(FluidState &fas, sf::RenderWindow &w): fluid_attributes(fas), window(w) {
+        int numParticles = fluid_attributes.num_particles;
+        n = fluid_attributes.numY;
+        radius = fluid_attributes.radius;
+        invSpacing = 1.f / fluid_attributes.cellSpacing;
 
-        cellSpacing = WIDTH / numX;
-        radius = 0.3 * cellSpacing;
+        this->collisions.resize(numParticles);
 
-        numY = std::floor(HEIGHT / cellSpacing);
-        gridSize = numX * numY;
+        this->va.resize(numParticles * 4);
+        this->vaCopy.resize(numParticles * 4);
+        texture.loadFromFile("white_circle.png");
+        texture.generateMipmap();
+        texture_size =static_cast<sf::Vector2f>(texture.getSize());
+        for (int index = 0; index < numParticles; ++index) {
+            int i = 4 * index;
+            va[i].texCoords = {0.f, 0.f};
+            va[i + 1].texCoords = {texture_size.x, 0.f};
+            va[i + 2].texCoords = {texture_size.x, texture_size.y};
+            va[i + 3].texCoords = {0.f, texture_size.y};
 
-        positions.resize(2 * num_particles);
-        velocities.resize(2 * num_particles);
-        temperatures.resize(num_particles);
-        cellType.resize(gridSize);
-        u.resize(gridSize);
-        v.resize(gridSize);
-        du.resize(gridSize);
-        dv.resize(gridSize);
-        prevU.resize(gridSize);
-        prevV.resize(gridSize);
-        cellDensities.resize(gridSize);
+            vaCopy[i].texCoords = {0.f, 0.f};
+            vaCopy[i + 1].texCoords = {texture_size.x, 0.f};
+            vaCopy[i + 2].texCoords = {texture_size.x, texture_size.y};
+            vaCopy[i + 3].texCoords = {0.f, texture_size.y};
+        }
+        states.texture = &texture;
 
-        numThreads = thread_pool.m_thread_count;
-        particlesPerThread = num_particles / numThreads;
-        numMissedParticles = num_particles - particlesPerThread * numThreads;
+        this->particleColors.resize(3 * numParticles);
+        for (int i = 2; i < 3 * numParticles; i += 3) {
+            particleColors[i] = 255;
+        }
 
-        // initializing particle positions
-        float separation = 2.1; 
+        // lerp between the values in colorMap to create a gradient array 
+        float num_colors = velColorMap.size() - 1; // number of colors - 1
+        float num_steps = 1.f * velGradient.size() / num_colors; //num_steps = 50 * key_range
+        int index = 0;
+        for (int i = 0; i < num_colors; ++i) {  
+            for (int x = 0; x < num_steps; ++x) {
+                float t = 1.f * x / num_steps;  // Interpolation factor
+                // lerp for r, g, b values between colorMap[i] andcolorMap [i+1]
+                int r = (int)(velColorMap[i][0] * (1 - t) + velColorMap[i + 1][0] * t);
+                int g = (int)(velColorMap[i][1] * (1 - t) + velColorMap[i + 1][1] * t);
+                int b = (int)(velColorMap[i][2] * (1 - t) + velColorMap[i + 1][2] * t);
+                velGradient[index] = std::array<int, 3>{r, g, b};
 
-        int wideNum = std::floor((WIDTH - 2 * cellSpacing - 2) / (radius * 2.1));
-        int highNum = num_particles / wideNum;
+                r = (int)(tempMap[i][0] * (1 - t) + tempMap[i + 1][0] * t);
+                g = (int)(tempMap[i][1] * (1 - t) + tempMap[i + 1][1] * t);
+                b = (int)(tempMap[i][2] * (1 - t) + tempMap[i + 1][2] * t);
+                tempgradient[index] = std::array<int, 3>{r, g, b};
 
-        float starting_px = radius + cellSpacing + 2;
-        float starting_py = (HEIGHT - (radius * separation * highNum)) / 2 + radius;
+                r = (int)(vortColorMap[i][0] * (1 - t) + vortColorMap[i + 1][0] * t);
+                g = (int)(vortColorMap[i][1] * (1 - t) + vortColorMap[i + 1][1] * t);
+                b = (int)(vortColorMap[i][2] * (1 - t) + vortColorMap[i + 1][2] * t);
+                vortGradient[index] = std::array<int, 3>{r, g, b};
 
-        float px = starting_px;
-        float py = starting_py;
-
-        int addTo = num_particles - (wideNum * highNum);
-
-        bool offset = true;
-        for (int i = 0; i < wideNum * highNum + addTo; ++i) {
-            this->positions[i * 2] = px;
-            this->positions[i * 2 + 1] = py;
-
-            px += this->radius * separation;
-
-            if ((i + 1) % wideNum == 0) {
-                px = starting_px;
-                if (offset) {
-                    px += this->radius;
-                }
-                py += this->radius * separation;
-                offset = !offset;
+                index++;
             }
         }
     }
 
-    bool getStop() {
-        return this->stop;
+    // move this into a fluidmath.hpp file
+    float curl(int i, int j) {
+        int idx = i * n + j;
+        const float denom = 1.f / (2.f * fluid_attributes.cellSpacing);
+        const int32_t leftType = fluid_attributes.cellType[idx - n] == 0;
+        const int32_t rightType = fluid_attributes.cellType[idx + n] == 0;
+        const int32_t topType = fluid_attributes.cellType[idx - 1] == 0;
+        const int32_t bottomType = fluid_attributes.cellType[idx + 1] == 0;
+        if (!leftType || !rightType || !topType || !bottomType) {
+            return 0.f;
+        }
+        return ((fluid_attributes.v[(i + 1) * n + j] * bottomType - fluid_attributes.v[(i - 1) * n + j] * topType) - (fluid_attributes.u[i * n + j + 1] * rightType - fluid_attributes.u[i * n + j - 1] * leftType)) * denom;
     }
 
-    void setStop(bool set) {
-        this->stop = set;
+    float calcVorticity(int i, int j) {
+        float curl = this->curl(i, j);
+        return std::abs(curl);// * curl;
     }
 
-    bool getStep() {
-        return this->step;
+    void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
+        int32_t velGradientSize = velGradient.size() - 1;
+        for (uint32_t index = startIndex; index < endIndex; ++index) {
+            int i = 4 * index;
+            const float px = fluid_attributes.positions[2 * index];
+            const float py = fluid_attributes.positions[2 * index + 1];
+
+            va[i].position = {px - radius, py - radius};
+            va[i + 1].position = {px + radius, py - radius};
+            va[i + 2].position = {px + radius, py + radius};
+            va[i + 3].position = {px - radius, py + radius};
+
+            sf::Color color;
+
+            int vel = (int)(fluid_attributes.velocities[2 * index] * fluid_attributes.velocities[2 * index] + fluid_attributes.velocities[2 * index + 1] * fluid_attributes.velocities[2 * index + 1]) / 15000; 
+            
+            color = sf::Color(velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][0], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][1], velGradient[std::min(velGradientSize, static_cast<int32_t>(vel))][2], 255);
+
+            va[i].color = color;
+            va[i + 1].color = color;
+            va[i + 2].color = color;
+            va[i + 3].color = color;
+        }
     }
 
-    void setStep(bool set) {
-        this->step = set;
+    void updateVertexArrayVorticity(uint32_t startIndex, uint32_t endIndex) {
+        int32_t vortGradientSize = vortGradient.size() - 1;
+        for (uint32_t index = startIndex; index < endIndex; ++index) {
+            int i = 4 * index;
+            const float px = fluid_attributes.positions[2 * index];
+            const float py = fluid_attributes.positions[2 * index + 1];
+
+            va[i].position = {px - radius, py - radius};
+            va[i + 1].position = {px + radius, py - radius};
+            va[i + 2].position = {px + radius, py + radius};
+            va[i + 3].position = {px - radius, py + radius};
+
+            int cellX = px / fluid_attributes.cellSpacing;
+            int cellY = py / fluid_attributes.cellSpacing;
+
+            float vort = static_cast<float>(std::min(255, static_cast<int>(calcVorticity(cellX, cellY) * 5))); 
+            sf::Color color;
+
+            color = sf::Color(vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][0], vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][1], vortGradient[std::min(vortGradientSize, static_cast<int32_t>(vort))][2], 255);
+
+            va[i].color = color;
+            va[i + 1].color = color;
+            va[i + 2].color = color;
+            va[i + 3].color = color;
+        }
     }
 
-    void addToVorticityStrength(float add) {
-        this->vorticityStrength += add;
+    void updateVertexArrayDiffusion(const uint32_t startIndex, const uint32_t endIndex) {
+        for (uint32_t index = startIndex; index < endIndex; ++index) {
+            const float s = 1.f;
+
+            int i = 4 * index;
+            const float px = fluid_attributes.positions[2 * index];
+            const float py = fluid_attributes.positions[2 * index + 1];
+
+            va[i].position = {px - radius, py - radius};
+            va[i + 1].position = {px + radius, py - radius};
+            va[i + 2].position = {px + radius, py + radius};
+            va[i + 3].position = {px - radius, py + radius};
+
+            particleColors[3 * index] = clamp(this->particleColors[3 * index] - s, 0, 255);
+            particleColors[3 * index + 1] = clamp(this->particleColors  [3 * index + 1] - s, 0, 255);
+            particleColors[3 * index + 2] = clamp(this->particleColors  [3 * index + 2] + s, 0, 255);
+
+            const int xi = clamp(std::floor(px * invSpacing), 1, fluid_attributes.numX - 1);
+            const int yi = clamp(std::floor(py * invSpacing), 1, fluid_attributes.numY - 1);
+            const int cellNr = xi * n + yi;
+
+            const float d0 = fluid_attributes.particleRestDensity;
+
+            if (d0 > 0.f) {
+                const float relDensity = this->fluid_attributes.cellDensities[cellNr] / d0;
+                if (relDensity < diffusionRatio) { 
+                    particleColors[3 * index] = 204;
+                    particleColors[3 * index + 1] = 204;
+                    particleColors[3 * index + 2] = 255;
+                }
+            }
+
+            sf::Color color = sf::Color(particleColors[3 * index],  particleColors[3 * index + 1], particleColors[3 * index + 2]);
+
+            va[i].color = color;
+            va[i + 1].color = color;
+            va[i + 2].color = color;
+            va[i + 3].color = color;
+        }
     }
 
-    float getVorticityStrength() {
-        return this->vorticityStrength;
+    void updateVertexArrayTemperature(const uint32_t startIndex, const uint32_t endIndex) {
+        for (uint32_t index = startIndex; index < endIndex; ++index) {
+            int i = 4 * index;
+            const float px = fluid_attributes.positions[2 * index];
+            const float py = fluid_attributes.positions[2 * index + 1];
+
+            float temp = fluid_attributes.temperatures[index];
+
+            if (temp < 30 && fluid_attributes.fireActive) {
+                temp = 0.f;
+            }
+
+            const int tempRadius = std::min(temp, radius);
+
+            va[i].position = {px - tempRadius, py - tempRadius};
+            va[i + 1].position = {px + tempRadius, py - tempRadius};
+            va[i + 2].position = {px + tempRadius, py + tempRadius};
+            va[i + 3].position = {px - tempRadius, py + tempRadius};
+
+            sf::Color color;
+
+            color = sf::Color(tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][0], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][1], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][2], 255);
+
+            va[i].color = color;
+            va[i + 1].color = color;
+            va[i + 2].color = color;
+            va[i + 3].color = color;
+        }
     }
 
-    float getFlipRatio() {
-        return this->flipRatio;
+    void UpdateVaVelocityMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->updateVertexArrayVelocity(start, end);
+        });
     }
 
-    void addToFlipRatio(const float add) {
-        this->flipRatio += add;
+    void UpdateVaVorticityMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->updateVertexArrayVorticity(start, end);
+        });
     }
 
-    void addToGravityX(float add) {
-        this->gravityX += add;
+    void UpdateVaDiffusionMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->updateVertexArrayDiffusion(start, end);
+        });
     }
 
-    float getGravityX() {
-        return this->gravityX;
+    void UpdateVaTemperatureMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->updateVertexArrayTemperature(start, end);
+        });
     }
 
-    void addToGravityY(float add) {
-        this->gravityY += add;
+    void DrawParticles() {
+        window.draw(va, states);
     }
 
-    float getGravityY() {
-        return this->gravityY;
-    }
 };
