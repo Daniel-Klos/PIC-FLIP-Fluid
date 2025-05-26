@@ -29,6 +29,6 @@ Improvements to be made:
 -  better collision resolution with scene objects
     - implement level sets instead of using SDFs
 -  more accurate divergence/volume correction
--  Better boundary conditions
+-  Slip boundary conditions without artifacts
 -  Make everything more efficient
     - Make sure that data structures & algs are as efficient and simple as possible
