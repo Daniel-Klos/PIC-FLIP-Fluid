@@ -61,7 +61,6 @@ class FluidHandler {
     int32_t scaledHEIGHT;
 
     CollisionGrid collisionGrid;
-    CollisionGrid cellOccupantsGrid;
 
     bool forceObjectActive = true;
     bool rigidObjectActive = false;
@@ -74,8 +73,6 @@ class FluidHandler {
     float obstacleTextureSizeY;
 
     int32_t renderPattern = 0;
-
-    bool fireActive = false;
 
     std::vector<uint32_t> collisions;
 
@@ -112,11 +109,6 @@ class FluidHandler {
     float FillGridTime = 0.f;
     float SimStepTime = 0.f;
     float steps = 0.f;
-    float DotTime = 0.f;
-    float EqualsPlusTime = 0.f;
-    float preconditioningTime = 0.f;
-    float matVecTime = 0.f;
-    float scaledAddTime = 0.f;
 
     PressureSolver &pressure_solver;
 
@@ -126,6 +118,8 @@ class FluidHandler {
 
     TransferGrid &transfer_grid;
 
+    sf::CircleShape circleDrawer;
+
 public:
     FluidHandler(float k, float overRelaxation_, float numPressureIters_, FluidState& fas, PressureSolver& ps, TransferGrid& tg, FluidRenderer& fr): k(k), fluid_attributes(fas), pressure_solver(ps), transfer_grid(tg), fluid_renderer(fr) {
 
@@ -134,7 +128,8 @@ public:
             text.setPosition(10, 10);
             text.setFillColor(sf::Color::White);*/
 
-            
+            circleDrawer.setRadius(fluid_attributes.cellSpacing / 6);    
+
             FLUID_CELL = fluid_attributes.FLUID_CELL;
             AIR_CELL = fluid_attributes.AIR_CELL;
             SOLID_CELL = fluid_attributes.SOLID_CELL;
@@ -191,8 +186,6 @@ public:
             this->scaledHEIGHT = std::ceil(static_cast<float>(fluid_attributes.HEIGHT) / scalingFactor);
 
             collisionGrid = CollisionGrid(scaledWIDTH, scaledHEIGHT);
-
-            cellOccupantsGrid = CollisionGrid(numX, numY);
             
             // move these to respective files
             int idx = 0;
@@ -333,16 +326,6 @@ public:
             fluid_attributes.positions[2 * i + 1] += fluid_attributes.velocities[2 * i + 1] * dt;
             fluid_attributes.velocities[2 * i + 1] += fluid_attributes.gravityX * dt;
             fluid_attributes.velocities[2 * i] += fluid_attributes.gravityY * dt;
-
-            if (this->fireActive && this->renderPattern == 3 && fluid_attributes.positions[2 * i + 1] < fluid_attributes.HEIGHT - fluid_attributes.cellSpacing - 10) {
-                fluid_attributes.velocities[2 * i + 1] -= fluid_attributes.fireStrength * fluid_attributes.temperatures[i] * dt;
-                if (fluid_attributes.temperatures[i] > 0) {
-                    fluid_attributes.temperatures[i] -= fluid_attributes.tempDiffusion;
-                }
-                if (collisions[i] == 0) {
-                    fluid_attributes.temperatures[i] = 0;
-                }
-            }
         }
     }
 
@@ -352,18 +335,37 @@ public:
         });
     }
 
+    void makeFire(int start, int end) {
+        for (int i = start; i < end; ++i) {
+            if (fluid_attributes.positions[2 * i + 1] < fluid_attributes.HEIGHT - fluid_attributes.cellSpacing - 10) {
+                fluid_attributes.velocities[2 * i + 1] -= fluid_attributes.fireStrength * fluid_attributes.temperatures[i] * dt;
+                if (fluid_attributes.temperatures[i] > 0) {
+                    fluid_attributes.temperatures[i] -= fluid_attributes.tempDiffusion * dt;
+                }
+                if (collisions[i] == 0) {
+                    fluid_attributes.temperatures[i] = 0;
+                }
+            }
+        }
+    }
+
+    void makeFireMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->makeFire(start, end);
+        });
+    }
+
     void addObjectsToGrids()
     {
 
         collisionGrid.clear();
-        cellOccupantsGrid.clear();
 
         const float minX = fluid_attributes.cellSpacing;
         const float maxX = fluid_attributes.WIDTH - fluid_attributes.cellSpacing;
         const float minY = fluid_attributes.cellSpacing;
         const float maxY = fluid_attributes.HEIGHT - fluid_attributes.cellSpacing;
 
-        uint32_t i{0};
+        uint32_t i = 0;
 
         for (int32_t index = 0; index < fluid_attributes.num_particles; ++index) {
             float x = fluid_attributes.positions[2 * index];
@@ -372,11 +374,6 @@ public:
                 int32_t gridX = x / scalingFactor;
                 int32_t gridY = y / scalingFactor;
                 collisionGrid.addAtom(gridX, gridY, i);
-                
-                int32_t cellOccupantsX = x / fluid_attributes.cellSpacing;
-                int32_t cellOccupantsY = y / fluid_attributes.cellSpacing;
-                cellOccupantsGrid.addAtom(cellOccupantsX, cellOccupantsY, i);
-
             }
             ++i;
         }
@@ -403,8 +400,8 @@ public:
             fluid_attributes.positions[2 * otherIndex + 1] -= col_vecY;
 
             const float transfer = (fluid_attributes.temperatures[index] - fluid_attributes.temperatures[otherIndex]) * fluid_attributes.interConductivity * dt;
-            fluid_attributes.temperatures[index] -= transfer;
-            fluid_attributes.temperatures[otherIndex] += transfer;
+            fluid_attributes.temperatures[index] -= transfer * dt;
+            fluid_attributes.temperatures[otherIndex] += transfer * dt;
 
             collisions[index]++;
             collisions[otherIndex]++;
@@ -415,14 +412,14 @@ public:
 
     void checkAtomCellCollisions(uint32_t atom_idx, const CollisionCell& c)
     {
-        for (uint32_t i{0}; i < c.objects_count; ++i) {
+        for (uint32_t i = 0; i < c.objects_count; ++i) {
             solveContact(atom_idx, c.objects[i]);
         }
     }
 
     void processCell(const CollisionCell& c, uint32_t index)
     {
-        for (uint32_t i{0}; i < c.objects_count; ++i) {
+        for (uint32_t i = 0; i < c.objects_count; ++i) {
             const uint32_t atom_idx = c.objects[i];
             for (int32_t side = 0; side < 2; ++side) {
                 checkAtomCellCollisions(atom_idx, collisionGrid.data[index + collisionGrid.height + side]);
@@ -437,7 +434,7 @@ public:
 
     void solveCollisionThreaded(uint32_t start, uint32_t end)
     {
-        for (uint32_t idx{start}; idx < end; ++idx) {
+        for (uint32_t idx = start; idx < end; ++idx) {
             processCell(collisionGrid.data[idx], idx);
         }
     }
@@ -483,7 +480,7 @@ public:
         const uint32_t slice_size   = (collisionGrid.width / slice_count) * collisionGrid.height;
         const uint32_t last_cell    = 2 * fluid_attributes.numThreads * slice_size;
         
-        for (uint32_t i{0}; i < fluid_attributes.numThreads; ++i) {
+        for (uint32_t i = 0; i < fluid_attributes.numThreads; ++i) {
             fluid_attributes.thread_pool.addTask([this, i, slice_size]{
                 uint32_t const start{2 * i * slice_size};
                 uint32_t const end  {start + slice_size};
@@ -498,7 +495,7 @@ public:
         }
         fluid_attributes.thread_pool.waitForCompletion();
         
-        for (uint32_t i{0}; i < fluid_attributes.numThreads; ++i) {
+        for (uint32_t i = 0; i < fluid_attributes.numThreads; ++i) {
             fluid_attributes.thread_pool.addTask([this, i, slice_size]{
                 uint32_t const start{(2 * i + 1) * slice_size};
                 uint32_t const end  {start + slice_size};
@@ -508,34 +505,49 @@ public:
         fluid_attributes.thread_pool.waitForCompletion();
     }
 
+    void heatGround(int32_t start, int32_t end) {
+        for (int i = start; i < end; ++i) {
+            if (fluid_attributes.positions[2 * i + 1] + radius > fluid_attributes.HEIGHT - fluid_attributes.cellSpacing) {
+                const float remove = 10.f; // % of the floor from the sides that you want not heated
+                if (renderPattern == 3 && fluid_attributes.temperatures[i] < fluid_renderer.tempgradient.size() && fluid_attributes.positions[2 * i] > fluid_attributes.WIDTH / remove && fluid_attributes.positions[2 * i] < fluid_attributes.WIDTH - fluid_attributes.WIDTH / remove) {
+                    fluid_attributes.temperatures[i] += fluid_attributes.groundConductivity * dt;
+                }
+            }
+        }
+    }
+
+    void heatGroundMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
+            this->heatGround(start, end);
+        });
+    }
+
     void constrainWalls(const uint32_t startIndex, const uint32_t endIndex) {
         for (int i = startIndex; i < endIndex; ++i) {
-            if (fluid_attributes.positions[2 * i] - radius < this->fluid_attributes.cellSpacing) {
-                fluid_attributes.positions[2 * i] = radius + this->fluid_attributes.cellSpacing;
-                if (fluid_attributes.velocities[2 * i] < 0) {
-                    fluid_attributes.velocities[2 * i] = 0.f;
+            int xi = 2 * i;
+            int yi = xi + 1;
+            if (fluid_attributes.positions[xi] - radius < fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[xi] = radius + fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[xi] < 0) {
+                    fluid_attributes.velocities[xi] = 0.f;
                 }
             }
-            else if (fluid_attributes.positions[2 * i] + radius > fluid_attributes.WIDTH - this->fluid_attributes.cellSpacing) {
-                fluid_attributes.positions[2 * i] = fluid_attributes.WIDTH - radius - this->fluid_attributes.cellSpacing;
-                if (fluid_attributes.velocities[2 * i] > 0) {
-                    fluid_attributes.velocities[2 * i] = 0.f;
+            else if (fluid_attributes.positions[xi] + radius > fluid_attributes.WIDTH - fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[xi] = fluid_attributes.WIDTH - radius - fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[xi] > 0) {
+                    fluid_attributes.velocities[xi] = 0.f;
                 }
             }
-            if (fluid_attributes.positions[2 * i + 1] - radius < this->fluid_attributes.cellSpacing) {
-                fluid_attributes.positions[2 * i + 1] = radius + this->fluid_attributes.cellSpacing;
-                if (fluid_attributes.velocities[2 * i + 1] < 0) {
-                    fluid_attributes.velocities[2 * i + 1] = 0.f;
+            if (fluid_attributes.positions[yi] - radius < fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[yi] = radius + fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[yi] < 0) {
+                    fluid_attributes.velocities[yi] = 0.f;
                 }
             }
-            else if (fluid_attributes.positions[2 * i + 1] + radius > fluid_attributes.HEIGHT - this->fluid_attributes.cellSpacing) {
-                fluid_attributes.positions[2 * i + 1] = fluid_attributes.HEIGHT - radius - this->fluid_attributes.cellSpacing;
-                if (fluid_attributes.velocities[2 * i + 1] > 0) {
-                    fluid_attributes.velocities[2 * i + 1] = 0.f;
-                }
-                const float remove = 10.f; // 5
-                if (this->renderPattern == 3 && fluid_attributes.temperatures[i] < fluid_renderer.tempgradient.size() && fluid_attributes.positions[2 * i] > fluid_attributes.WIDTH / remove && fluid_attributes.positions[2 * i] < fluid_attributes.WIDTH - fluid_attributes.WIDTH / remove) {
-                    fluid_attributes.temperatures[i] += fluid_attributes.groundConductivity;
+            else if (fluid_attributes.positions[yi] + radius > fluid_attributes.HEIGHT - fluid_attributes.cellSpacing) {
+                fluid_attributes.positions[yi] = fluid_attributes.HEIGHT - radius - fluid_attributes.cellSpacing;
+                if (fluid_attributes.velocities[yi] > 0) {
+                    fluid_attributes.velocities[yi] = 0.f;
                 }
             }
         }
@@ -991,6 +1003,8 @@ public:
         transfer_grid.d1.resize(2 * fluid_attributes.num_particles);
         transfer_grid.d2.resize(2 * fluid_attributes.num_particles);
         transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
+
+        //std::cout << fluid_attributes.num_particles << "\n";
     }
 
     void remove() {
@@ -1058,7 +1072,7 @@ public:
         fluid_renderer.vaCopy.resize(4 * fluid_attributes.num_particles);
     
         fluid_renderer.va.resize(4 * fluid_attributes.num_particles);
-        for (int i = 0; i < vaSize; ++i) {
+        for (int i = 0; i < 4 * fluid_attributes.num_particles; ++i) {
             fluid_renderer.va[i] = fluid_renderer.vaCopy[i];
         }
     
@@ -1150,6 +1164,49 @@ public:
         }
     }
 
+    void drawActiveUVNodes(sf::RenderWindow& window) {
+        float dx = fluid_attributes.cellSpacing;
+
+        for (int i = 0; i < numX; ++i) {
+            for (int j = 0; j < numY; ++j) {
+                int idx = i * n + j;
+
+                bool activeSolidU = false;
+                bool activeSolidV = false;
+                bool airU = false;
+                bool airV = false;
+
+                if (i > 0 && ((fluid_attributes.cellType[idx] == FLUID_CELL && fluid_attributes.cellType[idx - n] == SOLID_CELL) || (fluid_attributes.cellType[idx - n] == FLUID_CELL && fluid_attributes.cellType[idx] == SOLID_CELL)))
+                    activeSolidU = true;
+                        
+                if ((fluid_attributes.cellType[idx] == FLUID_CELL && fluid_attributes.cellType[idx - 1] == SOLID_CELL) || (fluid_attributes.cellType[idx - 1] == FLUID_CELL && fluid_attributes.cellType[idx] == SOLID_CELL))
+                    activeSolidV = true;
+
+                if (fluid_attributes.cellType[idx] != FLUID_CELL && fluid_attributes.cellType[idx - n] != FLUID_CELL) 
+                    airU = true;
+
+                if (fluid_attributes.cellType[idx] != FLUID_CELL && fluid_attributes.cellType[idx - 1] != FLUID_CELL)
+                    airV = true;
+
+                if ((fluid_attributes.u[idx] != 0 || activeSolidU) && !airU) {
+                    float uX = i * dx - fluid_attributes.cellSpacing / 6;
+                    float uY = (j + 0.5f) * dx - fluid_attributes.cellSpacing / 6;
+                    circleDrawer.setPosition(uX, uY);
+                    circleDrawer.setFillColor(sf::Color(0, 80, 255)); // green for u
+                    window.draw(circleDrawer);
+                }
+
+                if ((fluid_attributes.v[idx] != 0 || activeSolidV) && !airV) {
+                    float vX = (i + 0.5f) * dx - fluid_attributes.cellSpacing / 6;
+                    float vY = j * dx - fluid_attributes.cellSpacing / 6;
+                    circleDrawer.setPosition(vX, vY);
+                    circleDrawer.setFillColor(sf::Color(255, 0, 0)); // red for v
+                    window.draw(circleDrawer);
+                }
+            }
+        }
+    }
+
     void drawObstacles(sf::RenderWindow& window) {
         window.draw(obstacleVa, obstacleStates);
     }
@@ -1194,6 +1251,10 @@ public:
         dt = dt_;
 
         this->integrateMulti();
+
+        if (renderPattern == 3 && fluid_attributes.fireActive) {
+            this->makeFireMulti();
+        }
 
         if (fluid_attributes.fireActive) {
             std::fill(begin(collisions), end(collisions), 0);
@@ -1263,6 +1324,10 @@ public:
 
         //start = std::chrono::high_resolution_clock::now();
 
+        if (renderPattern == 3) {
+            this->heatGroundMulti();
+        }
+
         this->collideSurfacesMulti();
 
         this->constrainWallsMulti();
@@ -1319,7 +1384,10 @@ public:
 
         //start = std::chrono::high_resolution_clock::now();
         
-        pressure_solver.SORproject();
+        //pressure_solver.projectPCG(1);
+        //pressure_solver.projectSOR(pressure_solver.numPressureIters);
+        //pressure_solver.projectRedBlackGS(pressure_solver.numPressureIters);
+        pressure_solver.projectRedBlackGSMulti(pressure_solver.numPressureIters, fluid_attributes.numThreads);
 
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -1361,6 +1429,7 @@ public:
         }
         else if (renderPattern == 4) {
             this->DrawDivergences(window);
+            this->drawActiveUVNodes(window);
         }
 
         this->drawObstacles(window);
@@ -1383,7 +1452,6 @@ public:
             this->drawPencil(window);
         }
 
-        //this->drawUVGrids(window);
         /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -1434,22 +1502,6 @@ public:
         return RenderingTime;
     }
 
-    float getEqualsPlusTime() {
-        return this->EqualsPlusTime;
-    }
-
-    float getDotTime() {
-        return this->DotTime;
-    }
-
-    float getScaledAddTime() {
-        return this->scaledAddTime;
-    }
-
-    float getPreconditionTime() {
-        return this->preconditioningTime;
-    }
-
     void addToForceObjectRadius(float add) {
         if (forceObjectRadius + add > 0) {
             this->forceObjectRadius += add;
@@ -1486,14 +1538,6 @@ public:
         this->rigidObjectActive = active;
     }
 
-    void setFireActive(bool active) {
-        this->fireActive = active;
-    }
-
-    float getFireActive() {
-        return this->fireActive;
-    }
-
     int getNumX() {
         return this->numX;
     }
@@ -1526,30 +1570,4 @@ public:
         return this->generatorActive;
     }
 
-    void drawUVGrids(sf::RenderWindow& window) {
-        sf::VertexArray line(sf::Lines, 2);
-        int32_t n = numY;
-        for (int i = 0; i < numX; ++i) {
-            for (int j = 0; j < numY; ++j) {
-
-                // draw u lines (left right)
-                float uX = fluid_attributes.cellSpacing + i * fluid_attributes.cellSpacing;
-                float uY = 1.5 * fluid_attributes.cellSpacing + j * fluid_attributes.cellSpacing;
-                line[0].position = sf::Vector2f(uX, uY);
-                line[0].color  = sf::Color(255, 150, 0);
-                line[1].position = sf::Vector2f(uX + fluid_attributes.u[i * n + j], uY);
-                line[1].color = sf::Color(255, 150, 0);
-                window.draw(line);
-
-                //draw v lines (top bottom)
-                float vX = 1.5 * fluid_attributes.cellSpacing + i * fluid_attributes.cellSpacing;
-                float vY = fluid_attributes.cellSpacing + j * fluid_attributes.cellSpacing;
-                line[0].position = sf::Vector2f(vX, vY);
-                line[0].color  = sf::Color::Red;
-                line[1].position = sf::Vector2f(vX, vY + fluid_attributes.v[i * n + j]);
-                line[1].color = sf::Color::Red;
-                window.draw(line);
-            }
-        }
-    }
 };
