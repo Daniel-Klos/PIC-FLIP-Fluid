@@ -295,10 +295,7 @@ struct PressureSolver {
         }
     }
 
-    void PCGproject() {
-        std::copy(std::begin(fluid_attributes.u), std::end(fluid_attributes.u), std::begin(fluid_attributes.prevU));
-        std::copy(std::begin(fluid_attributes.v), std::end(fluid_attributes.v), std::begin(fluid_attributes.prevV));
-
+    void projectPCG(int numIters) {
         std::fill(begin(pressure), end(pressure), 0.f);
 
         setUpResidual();
@@ -314,7 +311,7 @@ struct PressureSolver {
 
         double sigma = DotMulti(&z, &residual);
 
-        for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
+        for (int iter = 0; iter < numIters && sigma > 0; ++iter) {
             matVec(&z, &search);
 
             //double denom = 0.0;
@@ -389,29 +386,25 @@ struct PressureSolver {
         }
     }
 
-    void SORproject() {
-        std::copy(std::begin(fluid_attributes.u), std::end(fluid_attributes.u), std::begin(fluid_attributes.prevU));
-        std::copy(std::begin(fluid_attributes.v), std::end(fluid_attributes.v), std::begin(fluid_attributes.prevV));
-
-        std::fill(begin(pressure), end(pressure), 0.f);
-
-        for (int iter = 0; iter < numPressureIters; ++iter) {
+    void projectSOR(int numIters) {
+        for (int iter = 0; iter < numIters; ++iter) {
             for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
                 for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                    if (fluid_attributes.cellType[i * n + j] != FLUID_CELL) continue;
+                    int idx = i * n + j;
+                    if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
 
-                    float leftType = fluid_attributes.cellType[(i - 1) * n + j] <= AIR_CELL ? 1 : 0;
-                    float rightType = fluid_attributes.cellType[(i + 1) * n + j] <= AIR_CELL ? 1 : 0;
-                    float topType = fluid_attributes.cellType[i * n + j - 1] <= AIR_CELL ? 1 : 0;
-                    float bottomType = fluid_attributes.cellType[i * n + j + 1] <= AIR_CELL ? 1 : 0;
+                    float leftType = fluid_attributes.cellType[idx - n] <= AIR_CELL ? 1 : 0;
+                    float rightType = fluid_attributes.cellType[idx + n] <= AIR_CELL ? 1 : 0;
+                    float topType = fluid_attributes.cellType[idx - 1] <= AIR_CELL ? 1 : 0;
+                    float bottomType = fluid_attributes.cellType[idx + 1] <= AIR_CELL ? 1 : 0;
 
                     float divideBy = leftType + rightType + topType + bottomType;
                     if (divideBy == 0.f) continue;
 
-                    float divergence = fluid_attributes.u[(i + 1) * n + j] - fluid_attributes.u[i * n + j] + fluid_attributes.v[i * n + j + 1] - fluid_attributes.v[i * n + j];
+                    float divergence = fluid_attributes.u[idx + n] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx];
 
                     if (fluid_attributes.particleRestDensity > 0.f) {
-                        float compression = fluid_attributes.cellDensities[i * n + j] - fluid_attributes.particleRestDensity;
+                        float compression = fluid_attributes.cellDensities[idx] - fluid_attributes.particleRestDensity;
                         if (compression > 0.f) {
                             divergence -= k * compression;
                         }
@@ -420,12 +413,76 @@ struct PressureSolver {
                     float p = divergence / divideBy;
                     p *= overRelaxation;
 
-                    fluid_attributes.u[i * n + j] += leftType * p;
-                    fluid_attributes.u[(i + 1) * n + j] -= rightType * p;
-                    fluid_attributes.v[i * n + j] += topType * p;
-                    fluid_attributes.v[i * n + j + 1] -= bottomType * p;
+                    fluid_attributes.u[idx] += leftType * p;
+                    fluid_attributes.u[idx + n] -= rightType * p;
+                    fluid_attributes.v[idx] += topType * p;
+                    fluid_attributes.v[idx + 1] -= bottomType * p;
                 }
             }
+        }
+    }
+
+    void passRedBlackGS(int start, int stop, bool red) {
+        for (int i = start; i < stop; ++i) {
+            for (int j = (i + red) % 2; j < fluid_attributes.numY - 1; j += 2) {
+                int idx = i * n + j;
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+
+                float leftType = fluid_attributes.cellType[idx - n] <= AIR_CELL ? 1 : 0;
+                float rightType = fluid_attributes.cellType[idx + n] <= AIR_CELL ? 1 : 0;
+                float topType = fluid_attributes.cellType[idx - 1] <= AIR_CELL ? 1 : 0;
+                float bottomType = fluid_attributes.cellType[idx + 1] <= AIR_CELL ? 1 : 0;
+
+                float divideBy = leftType + rightType + topType + bottomType;
+            
+                if (divideBy == 0.f) continue;
+
+                float divergence = fluid_attributes.u[idx + n] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx];
+                if (fluid_attributes.particleRestDensity > 0.f) {
+                    float compression = fluid_attributes.cellDensities[idx] - fluid_attributes.particleRestDensity;
+                    if (compression > 0.f) {
+                        divergence -= k * compression;
+                    }
+                }
+
+                float p = divergence / divideBy;
+                p *= overRelaxation;
+
+                fluid_attributes.u[idx] += leftType * p;
+                fluid_attributes.u[idx + n] -= rightType * p;
+                fluid_attributes.v[idx] += topType * p;
+                fluid_attributes.v[idx + 1] -= bottomType * p;
+            }
+        }
+    }
+
+    void projectRedBlackGS(int numIters) {
+        for (int i = 0; i < numIters; ++i) {
+            passRedBlackGS(0, fluid_attributes.numX - 1, 0);
+            passRedBlackGS(0, fluid_attributes.numX - 1, 1);
+        }
+    }
+
+    void projectRedBlackGSMulti(int numIters, int numThreads) {
+        int columnsPerThread = (fluid_attributes.numX - 1) / numThreads;
+        int numMissedColumns = fluid_attributes.numX - 1 - numThreads * columnsPerThread;
+
+        // not 100% thread safe but who cares there's no artifacts and it runs much faster than thread safe version
+        for (int iter = 0; iter < numIters; ++iter) {
+            for (int i = 0; i < numThreads; ++i) {
+                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
+                    int start = i * columnsPerThread + 1;
+                    int end = i * columnsPerThread + columnsPerThread + 1;
+                
+                    passRedBlackGS(start, end, 0);
+                    passRedBlackGS(start, end, 1);
+                });
+            }
+        
+            passRedBlackGS(fluid_attributes.numX - 1 - numMissedColumns, fluid_attributes.numX - 1, 0);
+            passRedBlackGS(fluid_attributes.numX - 1 - numMissedColumns, fluid_attributes.numX - 1, 1);
+        
+            fluid_attributes.thread_pool.waitForCompletion();
         }
     }
 
