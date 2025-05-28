@@ -1,5 +1,5 @@
 # PIC-FLIP-Fluid
-A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation. This implementation uses MICCG(0) for pressure projection.
+A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation.
 
 Controls:
 -   Press 1 for an interactive rigid object, 2 for a force object, 3 for an object that generates/removes particles, and 4 to draw/erase solids (left & right click). Use the mouse to change the size of objects.
@@ -25,9 +25,9 @@ The simulation is able to run 35k particles at around 80 fps, as you can see in 
 
 Improvements to be made:
 -  implement Multigrid, and then MGPCG
-    - implement efficient Red-Black Gauss Seidel and Dampened Jacobi
+    - Efficient Red Black SOR/GS has been implemented as well as Preconditioned Conjugate Gradient, now need to implement efficient Dampened Jacobi
 -  better collision resolution with scene objects
-    - implement level sets instead of using SDFs
+    - use continuous collision detection and resolution
 -  more accurate divergence/volume correction
 -  Currently using no-slip boundary conditions. Implement slip boundary conditions without artifacts
 -  Make everything more efficient
