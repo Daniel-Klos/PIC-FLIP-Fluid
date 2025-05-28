@@ -1,5 +1,5 @@
 # PIC-FLIP-Fluid
-A multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation.
+A 99% multithreaded particle in cell (PIC) fluid simulation combined with a fluid implicit particle (FLIP) simulation.
 
 Controls:
 -   Press 1 for an interactive rigid object, 2 for a force object, 3 for an object that generates/removes particles, and 4 to draw/erase solids (left & right click). Use the mouse to change the size of objects.
