@@ -20,6 +20,8 @@ class TransferGrid {
 
     CollisionGrid cellOccupantsGrid;
 
+    std::vector<std::vector<float>> threadDensities;
+
 public:
     std::vector<int32_t> nr0;
     std::vector<int32_t> nr1;
@@ -46,6 +48,11 @@ public:
         d2.resize(2 * fluid_attributes.num_particles);
         d3.resize(2 * fluid_attributes.num_particles);
 
+        threadDensities.resize(fluid_attributes.numThreads);
+        for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+            threadDensities[i].resize(fluid_attributes.gridSize, 0.f);
+        }
+
         SOLID_CELL = fluid_attributes.SOLID_CELL;
         FLUID_CELL = fluid_attributes.FLUID_CELL;
         AIR_CELL = fluid_attributes.AIR_CELL;
@@ -65,57 +72,25 @@ public:
         });
     }
 
-    void updateParticleDensity() {
-
+    void updateParticleDensityMulti() {
         std::fill(begin(fluid_attributes.cellDensities), end(fluid_attributes.cellDensities), 0.f);
-
-        for (int i = 0; i < fluid_attributes.num_particles; ++i) {
-            float x = fluid_attributes.positions[2 * i];
-            float y = fluid_attributes.positions[2 * i + 1];
-
-            x = clamp(x, fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
-            y = clamp(y, fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
-
-            int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), fluid_attributes.numX - 2));
-            float tx = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
-            int x1 = std::min(x0 + 1, fluid_attributes.numX - 1);
-
-            int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), fluid_attributes.numY - 2));
-            float ty = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
-            int y1 = std::min(y0 + 1, fluid_attributes.numY - 2);
-           
-            float sx = 1.f - tx;
-            float sy = 1.f - ty;
-
-            if (x0 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
-                fluid_attributes.cellDensities[x0 * n + y0] += sx * sy;
-            }
-            if (x1 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
-                fluid_attributes.cellDensities[x1 * n + y0] += tx * sy;
-            }
-            if (x1 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
-                fluid_attributes.cellDensities[x1 * n + y1] += tx * ty;
-            }
-            if (x0 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
-                fluid_attributes.cellDensities[x0 * n + y1] += sx * ty;
-            }
+        for (auto& vec : threadDensities) {
+            std::fill(vec.begin(), vec.end(), 0.f);
         }
 
-        if (fluid_attributes.particleRestDensity == 0.f) {
-            float sum = 0.f;
-            int numFluidCells = 0;
-
-            for (int i = 0; i < fluid_attributes.gridSize; ++i) {
-                if (fluid_attributes.cellType[i] == FLUID_CELL) {
-                    sum += fluid_attributes.cellDensities[i];
-                    numFluidCells++;
-                }
-            }
-
-            if (numFluidCells > 0) {
-                fluid_attributes.particleRestDensity = sum / numFluidCells;
-            }
+        for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+            int start = i * fluid_attributes.particlesPerThread;
+            int end = (i == fluid_attributes.numThreads - 1) ? start + fluid_attributes.particlesPerThread + fluid_attributes.numMissedParticles : start + fluid_attributes.particlesPerThread;
+            fluid_attributes.thread_pool.addTask([this, start, end, i] {
+                updateParticleDensityFrom(start, end, i);
+            });
         }
+
+        fluid_attributes.thread_pool.waitForCompletion();
+
+        applyLocalDensityUpdatesMulti();
+
+        calculateRestDensity();
     }
 
 private:
@@ -378,16 +353,21 @@ private:
 
     void transferParticleVelocitiesToGridMulti() {
 
-        const int32_t halfNumRemainingThreads = fluid_attributes.numThreads > 3 ? (fluid_attributes.numThreads - 2) / 2 : 1;
-        const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / halfNumRemainingThreads;
-        const int32_t numMissedColumns = fluid_attributes.numX - 2 - numColumnsPerThread * halfNumRemainingThreads;
+        const int32_t numThreads = fluid_attributes.numThreads;
+        const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / numThreads;
+        const int32_t numMissedColumns = fluid_attributes.numX - 2 - numColumnsPerThread * numThreads;
 
-        for (int i = 0; i < halfNumRemainingThreads; ++i) {
+        for (int i = 0; i < numThreads; ++i) {
             int start = i * numColumnsPerThread;
-            int end = (i == halfNumRemainingThreads - 1) ? (fluid_attributes.numX - 1) : (start + numColumnsPerThread);
+            int end = (i == numThreads - 1) ? (fluid_attributes.numX - 1) : (start + numColumnsPerThread);
             fluid_attributes.thread_pool.addTask([&, start, end]() {
                 transferToUGrid(start, end);
             });
+        }
+
+        for (int i = 0; i < numThreads; ++i) {
+            int start = i * numColumnsPerThread;
+            int end = (i == numThreads - 1) ? (fluid_attributes.numX - 1) : (start + numColumnsPerThread);
             fluid_attributes.thread_pool.addTask([&, start, end]() {
                 transferToVGrid(start, end);
             });
@@ -467,6 +447,72 @@ private:
                 fluid_attributes.velocities[vi] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
             }
         }
+    }
+
+    void calculateRestDensity() {
+        if (fluid_attributes.particleRestDensity == 0.f) {
+            float sum = 0.f;
+            int numFluidCells = 0;
+
+            for (int i = 0; i < fluid_attributes.gridSize; ++i) {
+                if (fluid_attributes.cellType[i] == FLUID_CELL) {
+                    sum += fluid_attributes.cellDensities[i];
+                    numFluidCells++;
+                }
+            }
+
+            if (numFluidCells > 0) {
+                fluid_attributes.particleRestDensity = sum / numFluidCells;
+            }
+        }
+    }
+
+    void updateParticleDensityFrom(int start, int end, int threadID) {
+        for (int i = start; i < end; ++i) {
+            float x = fluid_attributes.positions[2 * i];
+            float y = fluid_attributes.positions[2 * i + 1];
+
+            x = clamp(x, fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
+            y = clamp(y, fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
+
+            int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), fluid_attributes.numX - 2));
+            float tx = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
+            int x1 = std::min(x0 + 1, fluid_attributes.numX - 1);
+
+            int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), fluid_attributes.numY - 2));
+            float ty = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
+            int y1 = std::min(y0 + 1, fluid_attributes.numY - 2);
+           
+            float sx = 1.f - tx;
+            float sy = 1.f - ty;
+
+            if (x0 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
+                threadDensities[threadID][x0 * n + y0] += sx * sy;
+            }
+            if (x1 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
+                threadDensities[threadID][x1 * n + y0] += tx * sy;
+            }
+            if (x1 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
+                threadDensities[threadID][x1 * n + y1] += tx * ty;
+            }
+            if (x0 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
+                threadDensities[threadID][x0 * n + y1] += sx * ty;
+            }
+        }
+    }
+
+    void applyLocalDensityUpdates(int start, int end) {
+        for (int i = start; i < end; ++i) {
+            for (int j = 0; j < fluid_attributes.numThreads; ++j) {
+                fluid_attributes.cellDensities[i] += threadDensities[j][i];
+            }
+        }
+    }
+
+    void applyLocalDensityUpdatesMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.gridSize, [this](int start, int end) {
+            applyLocalDensityUpdates(start, end);
+        });
     }
 
 };
