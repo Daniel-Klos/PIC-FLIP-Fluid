@@ -18,11 +18,18 @@ struct PressureSolver {
     std::vector<double> si;
     std::vector<double> li;
     std::vector<double> precon;
-    std::vector<double> search;
+    std::vector<double> direction;
     std::vector<double> z;
     std::vector<double> dotProducts;
     std::vector<double> pressure;
 
+    std::vector<uint8_t> neighbors;
+    static constexpr uint8_t LEFT = 64;
+    static constexpr uint8_t RIGHT = 32;
+    static constexpr uint8_t BOTTOM = 16;
+    static constexpr uint8_t TOP = 8;
+    static constexpr uint8_t CENTER = 7;
+    static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
 
     PressureSolver(FluidState &fas, int numPressureIters_): fluid_attributes(fas), numPressureIters(numPressureIters_) {
         n = fluid_attributes.numY;
@@ -31,11 +38,12 @@ struct PressureSolver {
 
         gridSize = fluid_attributes.numX * fluid_attributes.numY;
         this->Adiag.resize(gridSize);
+        this->neighbors.resize(gridSize);
         this->si.resize(gridSize);
         this->li.resize(gridSize);
         this->precon.resize(gridSize);
         this->z.resize(gridSize);
-        this->search.resize(gridSize);
+        this->direction.resize(gridSize);
         this->residual.resize(gridSize);
         this->pressure.resize(gridSize);
     }
@@ -121,7 +129,7 @@ struct PressureSolver {
 
         /*const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
         fluid_attributes.thread_pool.dispatch(numColumns, [this](int start, int end) {
-            this->updateVertexArrayVorticity(start, end);
+            fluid_attributes.updateVertexArrayVorticity(start, end);
         });*/
     }
 
@@ -195,10 +203,11 @@ struct PressureSolver {
                 // si is short for swipe iteration, just some slang for you new gens
                     // si[index] = 0 if the cell in the next swipe iteration touching the current is not fluid, else si[index] = -1
 
-                // li is short for level iteration, try and keep up with the slang
+                // li is short for level iteration
                     // li[index] = 0 if the cell in the next level iteration touching the current cell is not fluid, else li[index] = -1
 
-                // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration
+                // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration (exactly one row below/above, one column left/right)
+
                 // same for level iteration, denoted with L
 
                 // if cell - S is fluid, then do: (si - S) * (precon - S), and (li - S) * (precon - S)
@@ -295,42 +304,30 @@ struct PressureSolver {
         }
     }
 
-    void projectPCG(int numIters) {
+    void projectMICCG(int numIters) { // include function pointer to applyPreconditioner as parameter
         std::fill(begin(pressure), end(pressure), 0.f);
 
         setUpResidual();
         setUpA();
         buildPreconditioner();
         applyPreconditioner(&z, &residual);
-        std::copy(begin(z), end(z), begin(search));
-
-        // DotMulti needs to be debugged, EqualsPlusTimesMulti good
-
-        /*double sigma = 0.0;
-        Dot(&z, &residual, 0, numX * numY, sigma);*/
+        std::copy(begin(z), end(z), begin(direction));
 
         double sigma = DotMulti(&z, &residual);
 
         for (int iter = 0; iter < numIters && sigma > 0; ++iter) {
-            matVec(&z, &search);
+            matVec(&z, &direction);
 
-            //double denom = 0.0;
-            //Dot(&z, &search, 0, numX * numY, denom);
-            //double alpha = sigma / denom;
+            double alpha = sigma / DotMulti(&z, &direction);
 
-            double alpha = sigma / DotMulti(&z, &search);
-
-            ScaledAdd(pressure, search, alpha);
+            ScaledAdd(pressure, direction, alpha);
             ScaledAdd(residual, z, -alpha);
 
             applyPreconditioner(&z, &residual);  // applying the preconditioner is the only thing making MICCG(0) so slow
 
-            //double sigmaNew = 0.0;
-            //Dot(&z, &residual, 0, numX * numY, sigmaNew);
-
             double sigmaNew = DotMulti(&z, &residual);
             
-            EqualsPlusTimesMulti(&search, &z, sigmaNew / sigma);
+            EqualsPlusTimesMulti(&direction, &z, sigmaNew / sigma);
 
             sigma = sigmaNew;
         }
@@ -355,7 +352,7 @@ struct PressureSolver {
 
         /*const int32_t numColumns = (fluid_attributes.numX - 2);
         fluid_attributes.thread_pool.dispatch(numColumns, [this](int start, int end) {
-            this->applyPressure(start, end);
+            fluid_attributes.applyPressure(start, end);
         });*/
     }
 
@@ -422,6 +419,10 @@ struct PressureSolver {
         }
     }
 
+    void preconditionSOR(int numIters) {
+
+    }
+
     void passRedBlackGS(int start, int stop, bool red) {
         for (int i = start; i < stop; ++i) {
             for (int j = (i + red) % 2; j < fluid_attributes.numY - 1; j += 2) {
@@ -484,6 +485,118 @@ struct PressureSolver {
         
             fluid_attributes.thread_pool.waitForCompletion();
         }
+    }
+
+    void projectVCycle() {
+
+    }
+
+    // conjugate gradient (not preconditioned) code
+    uint8_t getMaterialFromDirection(uint8_t direction, int idx) {
+        switch (direction) {
+            case LEFT:
+                return fluid_attributes.cellType[idx - n];
+            case RIGHT:
+                return fluid_attributes.cellType[idx + n];
+            case BOTTOM:
+                return fluid_attributes.cellType[idx + 1];
+            case TOP:
+                return fluid_attributes.cellType[idx - 1];
+        }
+
+        return SOLID_CELL; // should never get executed
+    }
+
+    uint8_t updateNbrFromNeighbor(uint8_t material, uint8_t nbr_info, uint8_t dir) {
+
+        // if neighbor cell is fluid or air, add to the first 3 bits
+        if (material != SOLID_CELL) {
+            nbr_info++;
+        }
+
+        // if neighbor cell is not fluid, end here
+        if (material != FLUID_CELL) {
+            return nbr_info;
+        }
+
+        // else, add the direction onto the last 4 bits of nbr_info. Using or here because we don't wanna touch the first 3 bits
+        return nbr_info | dir;
+    }
+
+    void setUpNeighbors() {
+        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
+            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
+                int idx = i * n + j;
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+
+                uint8_t nbr_info = 0u;
+                for (uint8_t dir : directions) {
+                    uint8_t material = getMaterialFromDirection(dir, idx);
+                    nbr_info = updateNbrFromNeighbor(material, nbr_info, dir);
+                }
+
+                neighbors[idx] = nbr_info;
+            }
+        }
+    }
+
+    void ATimes() {
+        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
+            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
+                int idx = i * n + j;
+
+                uint8_t nbrs = neighbors[idx];
+                if (!nbrs) { // if a cell has no neighbors continue
+                    Adiag[idx] = 0.0;
+                    continue;
+                }
+
+                // all of these & statements are just looking at different bits in nbrs
+                // nbrs & CENTER just extracts the first 3 bits of nbrs; if nbrs is 1001 010, then nbrs & center = 1001 010 & 0000 111 = 0000 010
+                Adiag[idx] = 
+                    ((nbrs & CENTER) * direction[idx]) -
+                    ((nbrs & LEFT) ? direction[idx - n] : 0) -
+                    ((nbrs & RIGHT) ? direction[idx + n] : 0) -
+                    ((nbrs & BOTTOM) ? direction[idx + 1] : 0) -
+                    ((nbrs & TOP) ? direction[idx - 1] : 0);
+            }
+        }
+    }
+
+    void projectCG(int numIters) {
+
+        setUpNeighbors();
+
+        std::fill(begin(pressure), end(pressure), 0.0);
+        std::fill(begin(Adiag), end(Adiag), 0.0);
+
+        setUpResidual();
+
+        // preconditionSOR(z, residual)
+
+        std::copy(begin(residual), end(residual), begin(direction));
+        // std::copy(begin(z), end(z), begin(direction));
+
+        double sigma = DotMulti(&residual, &residual);
+        
+        for (int iter = 0; iter < numIters && sigma > 0; ++iter) {
+            ATimes();
+            // ATimes(&z, &direction);
+            double alpha = sigma / DotMulti(&direction, &Adiag);
+            ScaledAdd(pressure, direction, alpha);
+            ScaledAdd(residual, Adiag, -alpha);
+            // ScaledAdd(residual, z, -alpha);
+
+            // preconditionSOR(&z, &residual)
+
+            double sigmaOld = sigma;
+            sigma = DotMulti(&residual, &residual);
+            // sigmaNew = DotMulti(&z, &residual);
+            EqualsPlusTimesMulti(&direction, &residual, sigma / sigmaOld);
+            // EqualsPlusTimesMulti(&direction, &z, sigmaNew / sigma);
+        }
+
+        applyPressureMulti();
     }
 
     void addToNumPressureIters(int32_t add) {
