@@ -736,59 +736,6 @@ public:
         obstaclePositions.resize(numObstacles - numFreedCells);
     }
 
-    void updateParticleDensity() {
-
-        std::fill(begin(fluid_attributes.cellDensities), end(fluid_attributes.cellDensities), 0.f);
-
-        for (int i = 0; i < fluid_attributes.num_particles; ++i) {
-            float x = fluid_attributes.positions[2 * i];
-            float y = fluid_attributes.positions[2 * i + 1];
-
-            x = this->clamp(x, fluid_attributes.cellSpacing, (this->numX - 1) * fluid_attributes.cellSpacing);
-            y = this->clamp(y, fluid_attributes.cellSpacing, (this->numY - 1) * fluid_attributes.cellSpacing);
-
-            int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), this->numX - 2));
-            float tx = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
-            int x1 = std::min(x0 + 1, this->numX - 1);
-
-            int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), this->numY - 2));
-            float ty = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
-            int y1 = std::min(y0 + 1, this->numY - 2);
-           
-            float sx = 1.f - tx;
-            float sy = 1.f - ty;
-
-            if (x0 < this->numX && y0 < this->numY) {
-                fluid_attributes.cellDensities[x0 * n + y0] += sx * sy;
-            }
-            if (x1 < this->numX && y0 < this->numY) {
-                fluid_attributes.cellDensities[x1 * n + y0] += tx * sy;
-            }
-            if (x1 < this->numX && y1 < this->numY) {
-                fluid_attributes.cellDensities[x1 * n + y1] += tx * ty;
-            }
-            if (x0 < this->numX && y1 < this->numY) {
-                fluid_attributes.cellDensities[x0 * n + y1] += sx * ty;
-            }
-        }
-
-        if (fluid_attributes.particleRestDensity == 0.f) {
-            float sum = 0.f;
-            int numFluidCells = 0;
-
-            for (int i = 0; i < fluid_attributes.gridSize; ++i) {
-                if (fluid_attributes.cellType[i] == FLUID_CELL) {
-                    sum += fluid_attributes.cellDensities[i];
-                    numFluidCells++;
-                }
-            }
-
-            if (numFluidCells > 0) {
-                fluid_attributes.particleRestDensity = sum / numFluidCells;
-            }
-        }
-    }
-
     float curl(int i, int j) {
         const int32_t n = this->numY;
         const float denom = 1.f / (2.f * fluid_attributes.cellSpacing);
@@ -1003,8 +950,6 @@ public:
         transfer_grid.d1.resize(2 * fluid_attributes.num_particles);
         transfer_grid.d2.resize(2 * fluid_attributes.num_particles);
         transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
-
-        //std::cout << fluid_attributes.num_particles << "\n";
     }
 
     void remove() {
@@ -1216,21 +1161,23 @@ public:
     }
 
     void update(float dt_, sf::RenderWindow& window, bool leftMouseDown, bool justPressed, bool rightMouseDown) {
-        //auto start = std::chrono::high_resolution_clock::now();
         sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
         this->mouseX = mouse_pos.x;
         this->mouseY = mouse_pos.y;
         
         if (!fluid_attributes.stop || fluid_attributes.step) {
+            //auto start = std::chrono::high_resolution_clock::now();
+            
             this->simulate(dt_, leftMouseDown, justPressed, rightMouseDown);
             fluid_attributes.step = false;
+
+            /*auto end = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+            addValueToAverage(SimStepTime, duration.count());*/
         }
 
         this->render(window);
 
-        /*auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        addValueToAverage(SimStepTime, duration.count());*/
     }
 
     void simulate(float dt_, bool leftMouseDown_, bool rightMouseDown_, bool justPressed) {
@@ -1259,6 +1206,7 @@ public:
         if (fluid_attributes.fireActive) {
             std::fill(begin(collisions), end(collisions), 0);
         }
+        
         /*auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -1341,20 +1289,20 @@ public:
 
 
 
-        //start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
     
         transfer_grid.TransferToGrid();
         
-        /*end = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ToGridTime, duration.count());*/
+        addValueToAverage(ToGridTime, duration.count());
 
 
 
         //start = std::chrono::high_resolution_clock::now();
         
-        this->updateParticleDensity();
+        transfer_grid.updateParticleDensity();
         
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -1384,10 +1332,11 @@ public:
 
         //start = std::chrono::high_resolution_clock::now();
         
-        //pressure_solver.projectPCG(1);
+        //pressure_solver.projectMICCG(1);
         //pressure_solver.projectSOR(pressure_solver.numPressureIters);
         //pressure_solver.projectRedBlackGS(pressure_solver.numPressureIters);
         pressure_solver.projectRedBlackGSMulti(pressure_solver.numPressureIters, fluid_attributes.numThreads);
+        //pressure_solver.projectCG(pressure_solver.numPressureIters);
 
         /*end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -1408,7 +1357,7 @@ public:
     }
 
     void render(sf::RenderWindow& window) {
-        //auto start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
         
         //this->drawCells(window);
 
@@ -1452,10 +1401,10 @@ public:
             this->drawPencil(window);
         }
 
-        /*auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(RenderingTime, duration.count());*/
+        addValueToAverage(RenderingTime, duration.count());
     }
 
     float getCombinedTime() {
@@ -1526,8 +1475,16 @@ public:
         }
     }
 
+    bool getForceObjectActive() {
+        return this->forceObjectActive;
+    }
+
     void setForceObjectActive(bool active) {
         this->forceObjectActive = active;
+    }
+
+    bool getGeneratorActive() {
+        return this->generatorActive;
     }
 
     void setGeneratorActive(bool active) {
@@ -1560,14 +1517,6 @@ public:
 
     void addToPencilRadius(int add) {
         this->pencilRadius += add;
-    }
-
-    bool getForceObjectActive() {
-        return this->forceObjectActive;
-    }
-
-    bool getGeneratorActive() {
-        return this->generatorActive;
     }
 
 };
