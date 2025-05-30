@@ -56,7 +56,7 @@ public:
     void TransferToGrid() {
         cacheTransferNodesMulti();
         setUpTransferGrids();
-        transferParticleVelocitiesToGrid();
+        transferParticleVelocitiesToGridMulti();
     }
 
     void TransferToParticles() {
@@ -65,7 +65,65 @@ public:
         });
     }
 
+    void updateParticleDensity() {
+
+        std::fill(begin(fluid_attributes.cellDensities), end(fluid_attributes.cellDensities), 0.f);
+
+        for (int i = 0; i < fluid_attributes.num_particles; ++i) {
+            float x = fluid_attributes.positions[2 * i];
+            float y = fluid_attributes.positions[2 * i + 1];
+
+            x = clamp(x, fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
+            y = clamp(y, fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
+
+            int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), fluid_attributes.numX - 2));
+            float tx = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
+            int x1 = std::min(x0 + 1, fluid_attributes.numX - 1);
+
+            int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), fluid_attributes.numY - 2));
+            float ty = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
+            int y1 = std::min(y0 + 1, fluid_attributes.numY - 2);
+           
+            float sx = 1.f - tx;
+            float sy = 1.f - ty;
+
+            if (x0 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
+                fluid_attributes.cellDensities[x0 * n + y0] += sx * sy;
+            }
+            if (x1 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
+                fluid_attributes.cellDensities[x1 * n + y0] += tx * sy;
+            }
+            if (x1 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
+                fluid_attributes.cellDensities[x1 * n + y1] += tx * ty;
+            }
+            if (x0 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
+                fluid_attributes.cellDensities[x0 * n + y1] += sx * ty;
+            }
+        }
+
+        if (fluid_attributes.particleRestDensity == 0.f) {
+            float sum = 0.f;
+            int numFluidCells = 0;
+
+            for (int i = 0; i < fluid_attributes.gridSize; ++i) {
+                if (fluid_attributes.cellType[i] == FLUID_CELL) {
+                    sum += fluid_attributes.cellDensities[i];
+                    numFluidCells++;
+                }
+            }
+
+            if (numFluidCells > 0) {
+                fluid_attributes.particleRestDensity = sum / numFluidCells;
+            }
+        }
+    }
+
 private:
+    // pgridx = 
+    void interpolateTo(float px, float py, float pgridx, float pgridy, float& topL) {
+
+    }
+
     void cacheWeightsAt(int pIdx, int component, int RKstep) {
         const float dx = (component != 0) * halfSpacing;
         const float dy = (component == 0) * halfSpacing;
@@ -94,18 +152,7 @@ private:
         int y0 = std::max(0, std::min(static_cast<int>(std::floor((py - dy) * invSpacing)), fluid_attributes.numY - 2)); // - 2
         float ty = ((py - dy) - y0 * fluid_attributes.cellSpacing) * invSpacing;
         int y1 = std::min(y0 + 1, fluid_attributes.numY - 1); // - 1
-        // try seeing if these have any problems when CG is implemented
-        // fixes jitter when the fluid is held with the force object at the top, but also makes the fluid stick to the top so leave out. Could just only do this firstone when gravity < 0
-        /*if (component == 1 && y0 == 0) {
-            y0 = y1;
-        }
-        if (component == 0 && y0 == 0) {
-            y1 = y0;
-        }*/
-        // fixes jitter when the fluid is held with the force object at the bottom, but also introduces the same gauss seidel artifact as the right side
-        /*if (component == 1 && y0 == numY - 2) {
-            y1 = y0;
-        }*/
+
         float sx = 1.f - tx;
         float sy = 1.f - ty;
 
@@ -201,69 +248,6 @@ private:
         }
     }
 
-    void transferToParticle(int32_t startIndex, int32_t endIndex) {
-        for (int32_t i = startIndex; i < endIndex; ++i) {
-            const int32_t ui = 2 * i;
-            const int32_t vi = 2 * i + 1;
-            const int32_t nr0_u = nr0[ui];
-            const int32_t nr1_u = nr1[ui];
-            const int32_t nr2_u = nr2[ui];
-            const int32_t nr3_u = nr3[ui];
-
-            const float d0_u = d0[ui];
-            const float d1_u = d1[ui];
-            const float d2_u = d2[ui];
-            const float d3_u = d3[ui];
-
-            const int32_t nr0_v = nr0[vi];
-            const int32_t nr1_v = nr1[vi];
-            const int32_t nr2_v = nr2[vi];
-            const int32_t nr3_v = nr3[vi];
-
-            const float d0_v = d0[vi];
-            const float d1_v = d1[vi];
-            const float d2_v = d2[vi];
-            const float d3_v = d3[vi];
-
-            const float pvx = fluid_attributes.velocities[ui];
-            const float pvy = fluid_attributes.velocities[vi];
-           
-            // AIR_CELL check logic
-            const float valid0u = fluid_attributes.cellType[nr0_u] != AIR_CELL || fluid_attributes.cellType[nr0_u - n] != AIR_CELL;
-            const float valid1u = fluid_attributes.cellType[nr1_u] != AIR_CELL || fluid_attributes.cellType[nr1_u - n] != AIR_CELL;
-            const float valid2u = fluid_attributes.cellType[nr2_u] != AIR_CELL || fluid_attributes.cellType[nr2_u - n] != AIR_CELL;
-            const float valid3u = fluid_attributes.cellType[nr3_u] != AIR_CELL || fluid_attributes.cellType[nr3_u - n] != AIR_CELL;
-
-            const float valid0v = fluid_attributes.cellType[nr0_v] != AIR_CELL || fluid_attributes.cellType[nr0_v - 1] != AIR_CELL;
-            const float valid1v = fluid_attributes.cellType[nr1_v] != AIR_CELL || fluid_attributes.cellType[nr1_v - 1] != AIR_CELL;
-            const float valid2v = fluid_attributes.cellType[nr2_v] != AIR_CELL || fluid_attributes.cellType[nr2_v - 1] != AIR_CELL;
-            const float valid3v = fluid_attributes.cellType[nr3_v] != AIR_CELL || fluid_attributes.cellType[nr3_v - 1] != AIR_CELL;
-
-            const float divX = valid0u * d0_u + valid1u * d1_u + valid2u * d2_u + valid3u * d3_u;
-            const float divY = valid0v * d0_v + valid1v * d1_v + valid2v * d2_v + valid3v * d3_v;
-
-            float picV;
-            float corr;
-            float flipV;
-
-            if (divX > 0.f) {
-                picV = (valid0u * d0_u * fluid_attributes.u[nr0_u] + valid1u * d1_u * fluid_attributes.u[nr1_u] + valid2u * d2_u * fluid_attributes.u[nr2_u] + valid3u * d3_u * fluid_attributes.u[nr3_u]) / divX;
-
-                corr = (valid0u * d0_u * (fluid_attributes.u[nr0_u] - fluid_attributes.prevU[nr0_u]) + valid1u * d1_u * (fluid_attributes.u[nr1_u] - fluid_attributes.prevU[nr1_u]) + valid2u * d2_u * (fluid_attributes.u[nr2_u] - fluid_attributes.prevU[nr2_u]) + valid3u * d3_u * (fluid_attributes.u[nr3_u] - fluid_attributes.prevU[nr3_u])) / divX;
-                flipV = pvx + corr;
-                fluid_attributes.velocities[ui] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
-            }
-
-            if (divY > 0.f) {
-                picV = (valid0v * d0_v * fluid_attributes.v[nr0_v] + valid1v * d1_v * fluid_attributes.v[nr1_v] + valid2v * d2_v * fluid_attributes.v[nr2_v] + valid3v * d3_v * fluid_attributes.v[nr3_v]) / divY;
-
-                corr = (valid0v * d0_v * (fluid_attributes.v[nr0_v] - fluid_attributes.prevV[nr0_v]) + valid1v * d1_v * (fluid_attributes.v[nr1_v] - fluid_attributes.prevV[nr1_v]) + valid2v * d2_v * (fluid_attributes.v[nr2_v] - fluid_attributes.prevV[nr2_v]) + valid3v * d3_v * (fluid_attributes.v[nr3_v] - fluid_attributes.prevV[nr3_v])) / divY;
-                flipV = pvy + corr;
-                fluid_attributes.velocities[vi] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
-            }
-        }
-    }
-
     void transferToUGridCells(int idx) {
         const auto cell = cellOccupantsGrid.data[idx];
     
@@ -352,7 +336,47 @@ private:
         }
     }
 
-    void transferParticleVelocitiesToGrid() {
+    void normalizeGridInterpolations(int start, int end) {
+        for (int i = start; i < end; ++i) {
+            float prevNode = fluid_attributes.du[i];
+            if (prevNode > 0.f) {
+                fluid_attributes.u[i] /= prevNode;
+            }
+            prevNode = fluid_attributes.dv[i];
+            if (prevNode > 0.f) {
+                fluid_attributes.v[i] /= prevNode;
+            }
+        }
+    }
+
+    void normalizeGridInterpolationsMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.gridSize, [this](int start, int end) {
+            normalizeGridInterpolations(start, end);
+        });
+    }
+
+    void enforceNoSlip(int start, int end) {
+        for (int i = start; i < end; ++i) {
+            for (int j = 0; j < fluid_attributes.numY; ++j) {
+                int idx = i * n + j;
+                bool solid = fluid_attributes.cellType[idx] == SOLID_CELL;
+                if (solid || i > 0 && fluid_attributes.cellType[idx - n] == SOLID_CELL) {
+                    fluid_attributes.u[idx] = 0;
+                }
+                if (solid || j > 0 && fluid_attributes.cellType[idx - 1] == SOLID_CELL) {
+                    fluid_attributes.v[idx] = 0;
+                }
+            }
+        }
+    }
+
+    void enforceNoSlipMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.numX, [this](int start, int end) {
+            enforceNoSlip(start, end);
+        });
+    }
+
+    void transferParticleVelocitiesToGridMulti() {
 
         const int32_t halfNumRemainingThreads = fluid_attributes.numThreads > 3 ? (fluid_attributes.numThreads - 2) / 2 : 1;
         const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / halfNumRemainingThreads;
@@ -371,30 +395,76 @@ private:
 
         fluid_attributes.thread_pool.waitForCompletion();
 
+        normalizeGridInterpolationsMulti();
 
-        for (int i = 0; i < fluid_attributes.u.size(); ++i) {
-            float prevNode = fluid_attributes.du[i];
-            if (prevNode > 0.f) {
-                fluid_attributes.u[i] /= prevNode;
-            }
-        }
-        for (int i = 0; i < fluid_attributes.v.size(); ++i) {
-            float prevNode = fluid_attributes.dv[i];
-            if (prevNode > 0.f) {
-                fluid_attributes.v[i] /= prevNode;
-            }
-        }
+        enforceNoSlipMulti();
 
-        for (int i = 0; i < fluid_attributes.numX; ++i) {
-            for (int j = 0; j < fluid_attributes.numY; ++j) {
-                int idx = i * n + j;
-                bool solid = fluid_attributes.cellType[idx] == SOLID_CELL;
-                if (solid || i > 0 && fluid_attributes.cellType[idx - n] == SOLID_CELL) {
-                    fluid_attributes.u[idx] = fluid_attributes.prevU[idx];
-                }
-                if (solid || j > 0 && fluid_attributes.cellType[idx - 1] == SOLID_CELL) {
-                    fluid_attributes.v[idx] = fluid_attributes.prevV[idx];
-                }
+        // store prev grid for FLIP
+        std::copy(std::begin(fluid_attributes.u), std::end(fluid_attributes.u), std::begin(fluid_attributes.prevU));
+        std::copy(std::begin(fluid_attributes.v), std::end(fluid_attributes.v), std::begin(fluid_attributes.prevV));
+    }
+
+
+
+    void transferToParticle(int32_t startIndex, int32_t endIndex) {
+        for (int32_t i = startIndex; i < endIndex; ++i) {
+            const int32_t ui = 2 * i;
+            const int32_t vi = 2 * i + 1;
+            const int32_t nr0_u = nr0[ui];
+            const int32_t nr1_u = nr1[ui];
+            const int32_t nr2_u = nr2[ui];
+            const int32_t nr3_u = nr3[ui];
+
+            const float d0_u = d0[ui];
+            const float d1_u = d1[ui];
+            const float d2_u = d2[ui];
+            const float d3_u = d3[ui];
+
+            const int32_t nr0_v = nr0[vi];
+            const int32_t nr1_v = nr1[vi];
+            const int32_t nr2_v = nr2[vi];
+            const int32_t nr3_v = nr3[vi];
+
+            const float d0_v = d0[vi];
+            const float d1_v = d1[vi];
+            const float d2_v = d2[vi];
+            const float d3_v = d3[vi];
+
+            const float pvx = fluid_attributes.velocities[ui];
+            const float pvy = fluid_attributes.velocities[vi];
+           
+            // AIR_CELL check logic
+            const float valid0u = fluid_attributes.cellType[nr0_u] != AIR_CELL || fluid_attributes.cellType[nr0_u - n] != AIR_CELL;
+            const float valid1u = fluid_attributes.cellType[nr1_u] != AIR_CELL || fluid_attributes.cellType[nr1_u - n] != AIR_CELL;
+            const float valid2u = fluid_attributes.cellType[nr2_u] != AIR_CELL || fluid_attributes.cellType[nr2_u - n] != AIR_CELL;
+            const float valid3u = fluid_attributes.cellType[nr3_u] != AIR_CELL || fluid_attributes.cellType[nr3_u - n] != AIR_CELL;
+
+            const float valid0v = fluid_attributes.cellType[nr0_v] != AIR_CELL || fluid_attributes.cellType[nr0_v - 1] != AIR_CELL;
+            const float valid1v = fluid_attributes.cellType[nr1_v] != AIR_CELL || fluid_attributes.cellType[nr1_v - 1] != AIR_CELL;
+            const float valid2v = fluid_attributes.cellType[nr2_v] != AIR_CELL || fluid_attributes.cellType[nr2_v - 1] != AIR_CELL;
+            const float valid3v = fluid_attributes.cellType[nr3_v] != AIR_CELL || fluid_attributes.cellType[nr3_v - 1] != AIR_CELL;
+
+            const float divX = valid0u * d0_u + valid1u * d1_u + valid2u * d2_u + valid3u * d3_u;
+            const float divY = valid0v * d0_v + valid1v * d1_v + valid2v * d2_v + valid3v * d3_v;
+
+            float picV;
+            float corr;
+            float flipV;
+
+            if (divX > 0.f) {
+                picV = (valid0u * d0_u * fluid_attributes.u[nr0_u] + valid1u * d1_u * fluid_attributes.u[nr1_u] + valid2u * d2_u * fluid_attributes.u[nr2_u] + valid3u * d3_u * fluid_attributes.u[nr3_u]) / divX;
+
+                corr = (valid0u * d0_u * (fluid_attributes.u[nr0_u] - fluid_attributes.prevU[nr0_u]) + valid1u * d1_u * (fluid_attributes.u[nr1_u] - fluid_attributes.prevU[nr1_u]) + valid2u * d2_u * (fluid_attributes.u[nr2_u] - fluid_attributes.prevU[nr2_u]) + valid3u * d3_u * (fluid_attributes.u[nr3_u] - fluid_attributes.prevU[nr3_u])) / divX;
+                flipV = pvx + corr;
+                fluid_attributes.velocities[ui] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
+            }
+
+            if (divY > 0.f) {
+                picV = (valid0v * d0_v * fluid_attributes.v[nr0_v] + valid1v * d1_v * fluid_attributes.v[nr1_v] + valid2v * d2_v * fluid_attributes.v[nr2_v] + valid3v * d3_v * fluid_attributes.v[nr3_v]) / divY;
+
+                corr = (valid0v * d0_v * (fluid_attributes.v[nr0_v] - fluid_attributes.prevV[nr0_v]) + valid1v * d1_v * (fluid_attributes.v[nr1_v] - fluid_attributes.prevV[nr1_v]) + valid2v * d2_v * (fluid_attributes.v[nr2_v] - fluid_attributes.prevV[nr2_v]) + valid3v * d3_v * (fluid_attributes.v[nr3_v] - fluid_attributes.prevV[nr3_v])) / divY;
+                flipV = pvy + corr;
+                fluid_attributes.velocities[vi] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
             }
         }
     }
