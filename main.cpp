@@ -29,7 +29,7 @@ int main()
     float gravityX = 5500.f; // 5500
     float gravityY = 0.f;
     float divergenceModifier = 10.f; // 8 
-    int gridNumX = 200; // 100, 150, 200
+    int gridNumX = 225; // 100, 150, 200
     int numPressureIters = 30; // 40 
     float diffusionRatio = 0.75f; 
     float flipRatio = 0.9f;
@@ -72,6 +72,9 @@ int main()
     std::ostringstream oss6;
     oss6 << std::fixed << std::setprecision(0) << gravityY; 
 
+    std::ostringstream oss7;
+    oss7 << std::fixed << std::setprecision(0) << numParticles; 
+
     sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "FLIP Simulation");
 
     sf::Clock deltaClock;
@@ -90,7 +93,7 @@ int main()
 
     const uint32_t maxThreads = std::thread::hardware_concurrency();
 
-    const uint32_t numThreads = std::min(static_cast<uint32_t>(11), maxThreads); // 11
+    const uint32_t numThreads = std::min(static_cast<uint32_t>(16), maxThreads); // 11
 
     tp::ThreadPool thread_pool(numThreads);
 
@@ -249,17 +252,17 @@ int main()
                 }
                 else if (event.key.code == sf::Keyboard::Q) {
                     /*std::cout << 
-                    "Fill Grid: " << fluid.getFillGridTime() << "\n" <<
+                    /*"Fill Grid: " << fluid.getFillGridTime() << "\n" <<
                     "Miscellaneous: " << fluid.getMiscellaneousTime() << "\n" <<
                     "Collision: " << fluid.getCollisionTime() << "\n" <<
-                    "Obstacle Collision: " << fluid.getObstacleCollisionTime() << "\n" <<
-                    "To Grid: " << fluid.getToGridTime() << "\n" <<
-                    "Density Update: " << fluid.getDensityUpdateTime() << "\n" <<
+                    "Obstacle Collision: " << fluid.getObstacleCollisionTime() << "\n" <<*/
+                    /*"To Grid: " << fluid.getToGridTime() << "\n";// <<*/
+                    /*"Density Update: " << fluid.getDensityUpdateTime() << "\n" <<
                     "Projection: " << fluid.getProjectionTime() << "\n" <<
                     "To Particles: " << fluid.getToParticlesTime() << "\n" <<
-                    "Rendering: " << fluid.getRenderingTime() << "\n" <<
+                    "Rendering: " << fluid.getRenderingTime() << "\n" <<*/
+                    /*"Whole Step: " << fluid.getSimStepTime() << "\n"; <<
                     "Combined: " << fluid.getCombinedTime() << "\n" <<
-                    "Whole Step: " << fluid.getSimStepTime() << "\n" <<
                     "Before Sim Step: " << beforeSimStep << "\n" <<
                     "After Sim Step: " << afterSimStep << "\n";*/
                     window.close();
@@ -366,6 +369,16 @@ int main()
 
         text.setPosition(WIDTH - 675, 10);
         text.setString(oss5.str());
+        window.draw(text);
+
+        if (fluid.getGeneratorActive() && (leftMouseDown || rightMouseDown)) {
+            oss7.str("");  
+            oss7.clear();
+            oss7 << std::fixed << std::setprecision(1) << fluid_attributes.getNumParticles();
+        }
+
+        text.setPosition(WIDTH - 775, 10);
+        text.setString(oss7.str());
         window.draw(text);
 
         window.display();
