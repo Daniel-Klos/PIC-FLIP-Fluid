@@ -13,9 +13,9 @@ Controls:
 
 The simulation is able to run over 80k particles at 60 fps
 
-![Screenshot 2025-02-23 142512](https://github.com/user-attachments/assets/7eb92834-c2e5-4f8c-90be-1b4fce782517)
+![Screenshot 2025-05-31 144513](https://github.com/user-attachments/assets/9998471c-b16c-45f5-b34b-5f588ca8f96a)
 
-![Screenshot 2025-02-23 142722](https://github.com/user-attachments/assets/b5f6bdc6-fa71-4b44-9ea7-9f305d571fb6)
+![Screenshot 2025-02-23 142512](https://github.com/user-attachments/assets/7eb92834-c2e5-4f8c-90be-1b4fce782517)
 
 ![Screenshot 2025-02-23 142916](https://github.com/user-attachments/assets/5981318f-5ac5-4cc7-aacd-515fefe743ca)
 
