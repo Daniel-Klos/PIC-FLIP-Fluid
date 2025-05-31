@@ -25,8 +25,8 @@ Improvements to be made:
 -  implement Multigrid, and then MGPCG
     - Efficient Red Black SOR/GS has been implemented as well as Preconditioned Conjugate Gradient, now need to implement efficient Dampened Jacobi
 -  better collision resolution with scene objects
-    - use continuous collision detection and resolution
--  more accurate divergence/volume correction
+    - use continuous collision detection
+-  Implement Implicit Density Projection
 -  Currently using no-slip boundary conditions. Implement slip boundary conditions without artifacts
 -  Make everything more efficient
     - Make sure that data structures & algs are as efficient and simple as possible
