@@ -10,7 +10,7 @@ struct PressureSolver {
     int AIR_CELL = fluid_attributes.AIR_CELL;
     int SOLID_CELL = fluid_attributes.SOLID_CELL;
 
-    float k = 8.f;
+    float k;
     float overRelaxation = 1.9f;
 
     std::vector<double> residual;
@@ -31,7 +31,10 @@ struct PressureSolver {
     static constexpr uint8_t CENTER = 7;
     static constexpr std::array<uint8_t, 4> directions{LEFT, RIGHT, BOTTOM, TOP};
 
-    PressureSolver(FluidState &fas, int numPressureIters_): fluid_attributes(fas), numPressureIters(numPressureIters_) {
+    std::vector<float> coarseU;
+    int max_multigrid_coarseness = 4;
+
+    PressureSolver(FluidState &fas, float k_, float numPressureIters_): fluid_attributes(fas), k(k_), numPressureIters(numPressureIters_) {
         n = fluid_attributes.numY;
 
         this->dotProducts.resize(fluid_attributes.numThreads);
@@ -465,10 +468,10 @@ struct PressureSolver {
     }
 
     void projectRedBlackGSMulti(int numIters, int numThreads) {
-        int columnsPerThread = (fluid_attributes.numX - 1) / numThreads;
+        /*int columnsPerThread = (fluid_attributes.numX - 1) / numThreads;
         int numMissedColumns = fluid_attributes.numX - 1 - numThreads * columnsPerThread;
 
-        // not 100% thread safe but who cares there's no artifacts and it runs much faster than thread safe version
+        // not 100% thread safe but runs faster than thread safe version. Just have to deal with data race artifacts at the edges of columns if u use this (makes vorticity view look bad)
         for (int iter = 0; iter < numIters; ++iter) {
             for (int i = 0; i < numThreads; ++i) {
                 fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
@@ -484,7 +487,46 @@ struct PressureSolver {
             passRedBlackGS(fluid_attributes.numX - 1 - numMissedColumns, fluid_attributes.numX - 1, 1);
         
             fluid_attributes.thread_pool.waitForCompletion();
+        }*/
+
+        int columnsPerThread = (fluid_attributes.numX - 1) / numThreads;
+        int numMissedColumns = fluid_attributes.numX - 1 - numThreads * columnsPerThread;
+
+        for (int iter = 0; iter < numIters; ++iter) {
+            for (int i = 0; i < numThreads; ++i) {
+                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
+                    int start = i * columnsPerThread + 1;
+                    int end = i * columnsPerThread + columnsPerThread + 1;
+                
+                    passRedBlackGS(start, end, 0);
+                });
+            }
+        
+            passRedBlackGS(fluid_attributes.numX - numMissedColumns, fluid_attributes.numX - 1, 0);
+        
+            fluid_attributes.thread_pool.waitForCompletion();
+
+            for (int i = 0; i < numThreads; ++i) {
+                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
+                    int start = i * columnsPerThread + 1;
+                    int end = i * columnsPerThread + columnsPerThread + 1;
+                
+                    passRedBlackGS(start, end, 1);
+                });
+            }
+        
+            passRedBlackGS(fluid_attributes.numX - numMissedColumns, fluid_attributes.numX - 1, 1);
+        
+            fluid_attributes.thread_pool.waitForCompletion();
         }
+    }
+
+    void restrict() {
+        
+    }
+
+    void prolongate() {
+
     }
 
     void projectVCycle() {

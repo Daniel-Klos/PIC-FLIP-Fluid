@@ -10,7 +10,7 @@
 #include "collision_grid.hpp"
 #include "pressure_solver.hpp"
 #include "transfer_grid.hpp"
-#include "rendering.hpp"
+#include "fluid_rendering.hpp"
 
 class FluidHandler {
     int FLUID_CELL;
@@ -22,7 +22,6 @@ class FluidHandler {
     float invSpacing;
     float halfSpacing;
     float radius;
-    float k;
     float dt;
     bool interacting = false;
 
@@ -121,7 +120,7 @@ class FluidHandler {
     sf::CircleShape circleDrawer;
 
 public:
-    FluidHandler(float k, float overRelaxation_, float numPressureIters_, FluidState& fas, PressureSolver& ps, TransferGrid& tg, FluidRenderer& fr): k(k), fluid_attributes(fas), pressure_solver(ps), transfer_grid(tg), fluid_renderer(fr) {
+    FluidHandler(FluidState& fas, PressureSolver& ps, TransferGrid& tg, FluidRenderer& fr): fluid_attributes(fas), pressure_solver(ps), transfer_grid(tg), fluid_renderer(fr) {
 
             /*font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
@@ -324,8 +323,14 @@ public:
         for (int i = startIndex; i < endIndex; ++i) {
             fluid_attributes.positions[2 * i] += fluid_attributes.velocities[2 * i] * dt;
             fluid_attributes.positions[2 * i + 1] += fluid_attributes.velocities[2 * i + 1] * dt;
-            fluid_attributes.velocities[2 * i + 1] += fluid_attributes.gravityX * dt;
-            fluid_attributes.velocities[2 * i] += fluid_attributes.gravityY * dt;
+            fluid_attributes.velocities[2 * i] += fluid_attributes.gravityX * dt;
+            fluid_attributes.velocities[2 * i + 1] += fluid_attributes.gravityY * dt;
+
+            /*if (fluid_attributes.densities[i] > 0) {
+                float buoyancy = fluid_attributes.gravityY * (1 - (fluid_attributes.particle_densities[i] / fluid_attributes.densities[i]));
+                //float buoyancy = fluid_attributes.gravityY * (fluid_attributes.densities[i] - fluid_attributes.particle_densities[i]) / fluid_attributes.particleRestDensity;
+                fluid_attributes.velocities[2 * i + 1] += buoyancy * dt;
+            }*/
         }
     }
 
@@ -476,13 +481,13 @@ public:
 
     void solveCollisions()
     {
-        const uint32_t slice_count  = fluid_attributes.numThreads * 2;
+        const uint32_t slice_count  = fluid_attributes.numThreads;
         const uint32_t slice_size   = (collisionGrid.width / slice_count) * collisionGrid.height;
-        const uint32_t last_cell    = 2 * fluid_attributes.numThreads * slice_size;
+        const uint32_t last_cell    = fluid_attributes.numThreads * slice_size;
         
         for (uint32_t i = 0; i < fluid_attributes.numThreads; ++i) {
             fluid_attributes.thread_pool.addTask([this, i, slice_size]{
-                uint32_t const start{2 * i * slice_size};
+                uint32_t const start{i * slice_size};
                 uint32_t const end  {start + slice_size};
                 solveCollisionThreaded(start, end);
             });
@@ -494,22 +499,17 @@ public:
             });
         }
         fluid_attributes.thread_pool.waitForCompletion();
-        
-        for (uint32_t i = 0; i < fluid_attributes.numThreads; ++i) {
-            fluid_attributes.thread_pool.addTask([this, i, slice_size]{
-                uint32_t const start{(2 * i + 1) * slice_size};
-                uint32_t const end  {start + slice_size};
-                solveCollisionThreaded(start, end);
-            });
-        }
-        fluid_attributes.thread_pool.waitForCompletion();
     }
 
     void heatGround(int32_t start, int32_t end) {
+        const float percentRemoved = 0.1f;
+        const float leftEdge = fluid_attributes.WIDTH * percentRemoved;
+        const float rightEdge = fluid_attributes.WIDTH * (1.0f - percentRemoved);
+
         for (int i = start; i < end; ++i) {
             if (fluid_attributes.positions[2 * i + 1] + radius > fluid_attributes.HEIGHT - fluid_attributes.cellSpacing) {
                 const float remove = 10.f; // % of the floor from the sides that you want not heated
-                if (renderPattern == 3 && fluid_attributes.temperatures[i] < fluid_renderer.tempgradient.size() && fluid_attributes.positions[2 * i] > fluid_attributes.WIDTH / remove && fluid_attributes.positions[2 * i] < fluid_attributes.WIDTH - fluid_attributes.WIDTH / remove) {
+                if (renderPattern == 3 && fluid_attributes.temperatures[i] < fluid_renderer.tempgradient.size() && !remove || (fluid_attributes.positions[2 * i] > leftEdge && fluid_attributes.positions[2 * i] < rightEdge)) {
                     fluid_attributes.temperatures[i] += fluid_attributes.groundConductivity * dt;
                 }
             }
@@ -751,11 +751,10 @@ public:
 
     float calcVorticity(int i, int j) {
         float curl = this->curl(i, j);
-        return std::abs(curl);// * curl;
+        return curl * curl;
     }
 
     void calcVorticityConfinement(bool red, int32_t startColumn, int32_t endColumn) {
-        const int32_t n = this->numY;
         for (int32_t i = startColumn; i < endColumn; ++i) {
             for (int32_t j = 1; j < numY - 1; ++j) {
                 if (red) {
@@ -768,7 +767,6 @@ public:
                 float dy = abs(curl(i + 1, j)) - abs(curl(i - 1, j));
 
                 const float len = std::sqrt(dx * dx + dy * dy);
-
                 const float invLen = 1.f / (len + (len == 0.f)) - (len == 0.f);
 
                 dx *= invLen;
@@ -785,7 +783,7 @@ public:
     void applyVorticityConfinementRedBlack() {
         const int32_t numColumnsPerThread = (numX - 2) / fluid_attributes.numThreads;
         const int32_t numMissedColumns = numX - 2 - numColumnsPerThread * fluid_attributes.numThreads;
-
+        
         for (int i = 0; i < fluid_attributes.numThreads; ++i) {
             fluid_attributes.thread_pool.addTask([&, i]() {
                 this->calcVorticityConfinement(true, 1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
@@ -812,8 +810,11 @@ public:
         if (mouseDown) {
             float vx = (objectX - objectPrevX) * 100;
             float vy = (objectY - objectPrevY) * 100;
-            for (int i = 1; i < numX - 1; i++) {
-                for (int j = 1; j < numY - 1; j++) {
+            int objectCellX = objectX / fluid_attributes.cellSpacing;
+            int objectCellY = objectY / fluid_attributes.cellSpacing;
+            int objectCellRadius = std::ceil(objectRadius / fluid_attributes.cellSpacing);
+            for (int i = objectCellX - objectCellRadius; i < objectCellX + objectCellRadius; i++) {
+                for (int j = objectCellY - objectCellRadius; j < objectCellY + objectCellRadius; j++) {
                     int cellNr = i * n + j;
                     if (fluid_attributes.cellType[i * n + j] == SOLID_CELL) continue;
                     float dx = (i + 0.5) * fluid_attributes.cellSpacing - objectX;
@@ -910,6 +911,8 @@ public:
 
         fluid_attributes.num_particles += addedTo;
 
+        /*fluid_attributes.particle_densities.resize(fluid_attributes.num_particles);
+        fluid_attributes.densities.resize(fluid_attributes.num_particles);*/
         fluid_attributes.positions.resize(2 * fluid_attributes.num_particles);
         fluid_attributes.velocities.resize(2 * fluid_attributes.num_particles);
         fluid_renderer.particleColors.resize(3 * fluid_attributes.num_particles);
@@ -921,6 +924,8 @@ public:
             int idx1 = 2 * i;
             int idx2 = 3 * i;
             int idx3 = 4 * i;
+
+            //fluid_attributes.particle_densities[i] = (i < fluid_attributes.num_particles / 2) ? 0.9f : 0.2f;
 
             fluid_attributes.velocities[idx1] = 0.f;
             fluid_attributes.velocities[idx1 + 1] = 0.f;
@@ -988,6 +993,9 @@ public:
                     size_t quadrupleremove = 4 * remove;
     
                     if (2 * particleIndex + 2 < double_len) {
+                        /*fluid_attributes.particle_densities[particleIndex] = fluid_attributes.particle_densities[particleIndex - 1 - remove];
+                        fluid_attributes.densities[particleIndex] = fluid_attributes.particle_densities[particleIndex - 1 - remove];*/
+
                         fluid_attributes.positions[doubleid] = fluid_attributes.positions[double_len - 2 - doubleremove];
                         fluid_attributes.positions[doubleid + 1] = fluid_attributes.positions[double_len - 1 - doubleremove];
 
@@ -1011,6 +1019,8 @@ public:
 
         fluid_attributes.num_particles -= remove;
     
+        /*fluid_attributes.particle_densities.resize(fluid_attributes.num_particles);
+        fluid_attributes.densities.resize(fluid_attributes.num_particles);*/
         fluid_attributes.positions.resize(2 * fluid_attributes.num_particles);
         fluid_attributes.velocities.resize(2 * fluid_attributes.num_particles);
         fluid_renderer.particleColors.resize(3 * fluid_attributes.num_particles);
@@ -1193,11 +1203,13 @@ public:
             // 6) move divergence view into a vertex array
             // 7) updateDensity -- Same idea as to grid -- low priority
         
-        //auto start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::high_resolution_clock::now();
 
         dt = dt_;
 
         this->integrateMulti();
+
+        // pressure_solver.project_density_implicit();
 
         if (renderPattern == 3 && fluid_attributes.fireActive) {
             this->makeFireMulti();
@@ -1207,24 +1219,24 @@ public:
             std::fill(begin(collisions), end(collisions), 0);
         }
         
-        /*auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(miscellaneousTime, duration.count());*/
+        addValueToAverage(miscellaneousTime, duration.count());
 
 
-        //start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
         addObjectsToGrids();
 
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(FillGridTime, duration.count());*/
+        addValueToAverage(FillGridTime, duration.count());
 
         
 
 
-        //start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
         leftMouseDown = leftMouseDown_;
         rightMouseDown = rightMouseDown_;
 
@@ -1241,7 +1253,7 @@ public:
         else if (generatorActive && rightMouseDown) {
             this->remove();
         }
-        
+    
         if (forceObjectActive && leftMouseDown) {
             this->makeForceObjectQueries(-250); // pulling, -250
         }
@@ -1249,28 +1261,26 @@ public:
             this->makeForceObjectQueries(1000); // pushing, 1000
         }
 
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(miscellaneousTime, duration.count());*/
+        addValueToAverage(miscellaneousTime, duration.count());
 
 
         
 
-
-        //start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
         solveCollisions();
-        
-        /*end = std::chrono::high_resolution_clock::now();
+        //solveCollisions();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(CollisionTime, duration.count());*/
+        addValueToAverage(CollisionTime, duration.count());
 
 
 
 
-
-        //start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
 
         if (renderPattern == 3) {
             this->heatGroundMulti();
@@ -1280,80 +1290,78 @@ public:
 
         this->constrainWallsMulti();
 
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ObstacleCollisionTime, duration.count());*/
+        addValueToAverage(ObstacleCollisionTime, duration.count());
 
 
 
 
-
-        auto start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
     
         transfer_grid.TransferToGrid();
         
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        end = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         addValueToAverage(ToGridTime, duration.count());
 
-
-
-        //start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
         
-        transfer_grid.updateParticleDensity();
-        
-        /*end = std::chrono::high_resolution_clock::now();
+        transfer_grid.updateCellDensitiesMulti();
+        //transfer_grid.updateParticleDensities(0, fluid_attributes.num_particles);
+
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(DensityUpdateTime, duration.count());*/
+        addValueToAverage(DensityUpdateTime, duration.count());
 
 
 
-        //start = std::chrono::high_resolution_clock::now();
+
+
+        start = std::chrono::high_resolution_clock::now();
         
         if (rigidObjectActive) {
             this->includeRigidObject(leftMouseDown, justPressed);
         }
 
-
         if (fluid_attributes.vorticityStrength != 0) {
-            this->applyVorticityConfinementRedBlack();
+            //this->applyVorticityConfinementRedBlack();
         }
         
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(miscellaneousTime, duration.count());*/
+        addValueToAverage(miscellaneousTime, duration.count());
 
         
 
 
         //start = std::chrono::high_resolution_clock::now();
         
-        //pressure_solver.projectMICCG(1);
+        //pressure_solver.projectMICCG(pressure_solver.numPressureIters);
         //pressure_solver.projectSOR(pressure_solver.numPressureIters);
         //pressure_solver.projectRedBlackGS(pressure_solver.numPressureIters);
         pressure_solver.projectRedBlackGSMulti(pressure_solver.numPressureIters, fluid_attributes.numThreads);
         //pressure_solver.projectCG(pressure_solver.numPressureIters);
 
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ProjectionTime, duration.count());*/
+        addValueToAverage(ProjectionTime, duration.count());
 
 
 
-
-        //start = std::chrono::high_resolution_clock::now();
+        start = std::chrono::high_resolution_clock::now();
         
         transfer_grid.TransferToParticles();
         
-        /*end = std::chrono::high_resolution_clock::now();
+        end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        addValueToAverage(ToParticlesTime, duration.count());*/
+        addValueToAverage(ToParticlesTime, duration.count());
     }
 
     void render(sf::RenderWindow& window) {
@@ -1379,6 +1387,9 @@ public:
         else if (renderPattern == 4) {
             this->DrawDivergences(window);
             this->drawActiveUVNodes(window);
+        }
+        else if (renderPattern == 5) {
+            fluid_renderer.UpdateVaCustomMulti();
         }
 
         this->drawObstacles(window);
@@ -1470,7 +1481,7 @@ public:
 
     void setNextRenderPattern() {
         this->renderPattern++;
-        if (this->renderPattern > 4) {
+        if (this->renderPattern > 4) { // 5 if you have an idea for custom rendering
             this->renderPattern = 0;
         }
     }
