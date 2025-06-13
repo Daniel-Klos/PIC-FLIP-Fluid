@@ -65,17 +65,9 @@ class FluidHandler {
     bool rigidObjectActive = false;
     bool generatorActive = false;
 
-    float textureSizeX;
-    float textureSizeY;
-
-    float obstacleTextureSizeX;
-    float obstacleTextureSizeY;
-
     int32_t renderPattern = 0;
 
     std::vector<uint32_t> collisions;
-
-    sf::RectangleShape cellDrawer;
 
     bool solidDrawing = false;
 
@@ -90,6 +82,7 @@ class FluidHandler {
     sf::VertexArray obstacleVa{sf::PrimitiveType::Quads};
 
     sf::Texture obstacleTexture;
+    sf::Vector2f obstacle_texture_size;
 
     sf::RenderStates obstacleStates;
 
@@ -117,17 +110,13 @@ class FluidHandler {
 
     TransferGrid &transfer_grid;
 
-    sf::CircleShape circleDrawer;
-
 public:
     FluidHandler(FluidState& fas, PressureSolver& ps, TransferGrid& tg, FluidRenderer& fr): fluid_attributes(fas), pressure_solver(ps), transfer_grid(tg), fluid_renderer(fr) {
 
             /*font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
             text.setFont(font);
             text.setPosition(10, 10);
-            text.setFillColor(sf::Color::White);*/
-
-            circleDrawer.setRadius(fluid_attributes.cellSpacing / 6);    
+            text.setFillColor(sf::Color::White);*/ 
 
             FLUID_CELL = fluid_attributes.FLUID_CELL;
             AIR_CELL = fluid_attributes.AIR_CELL;
@@ -146,11 +135,6 @@ public:
             pencil.setOutlineThickness(1);
             pencil.setOutlineColor(sf::Color::Black);
 
-            auto size = sf::Vector2f(fluid_attributes.cellSpacing, fluid_attributes.cellSpacing);
-            this->cellDrawer.setSize(size);
-            this->cellDrawer.setOutlineColor(sf::Color::White);
-            this->cellDrawer.setOutlineThickness(1.f);
-
             this->collisions.resize(fluid_attributes.num_particles);
 
             size_t numObstacles = 2 * numX + 2 * (numY - 2);
@@ -161,7 +145,7 @@ public:
 
             obstacleTexture.loadFromFile("gray_square.png");
             obstacleTexture.generateMipmap();
-            auto const obstacle_texture_size = static_cast<sf::Vector2f>(obstacleTexture.getSize());
+            obstacle_texture_size = static_cast<sf::Vector2f>(obstacleTexture.getSize());
             for (int index = 0; index < numObstacles; ++index) {
                 int i = 4 * index;
                 obstacleVa[i].texCoords = {0.f, 0.f};
@@ -175,9 +159,6 @@ public:
                 obstacleVa[i + 3].color = gray;
             }
             obstacleStates.texture = &obstacleTexture;
-
-            obstacleTextureSizeX = obstacle_texture_size.x;
-            obstacleTextureSizeY = obstacle_texture_size.y;
 
             this->scalingFactor = 2 * radius;
 
@@ -676,9 +657,9 @@ public:
             for (int i = 0; i < numAddedObstacles; ++i) {
                 int idx = 4 * (i + numObstacles);
                 obstacleVa[idx].texCoords = {0.f, 0.f};
-                obstacleVa[idx + 1].texCoords = {textureSizeX, 0.f};
-                obstacleVa[idx + 2].texCoords = {textureSizeX, textureSizeY};
-                obstacleVa[idx + 3].texCoords = {0.f, textureSizeY};
+                obstacleVa[idx + 1].texCoords = {obstacle_texture_size.x, 0.f};
+                obstacleVa[idx + 2].texCoords = {obstacle_texture_size.x, obstacle_texture_size.y};
+                obstacleVa[idx + 3].texCoords = {0.f, obstacle_texture_size.y};
 
                 obstacleVa[idx].color = gray;
                 obstacleVa[idx + 1].color = gray;
@@ -1084,84 +1065,6 @@ public:
         }
     }
 
-    void DrawDivergences(sf::RenderWindow& window) {
-        float maxDiv = 0.f;
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * numY + j;
-                if (fluid_attributes.cellType[idx] == FLUID_CELL) {
-                    float div = fabsf(fluid_attributes.u[(i + 1) * n + j] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx]);
-
-                    if (div > maxDiv) {
-                        maxDiv = div;
-                    }
-                }
-            }
-        }
-
-        if (maxDiv == 0.f) maxDiv = 1e-5f;
-
-        for (int i = 1; i < numX - 1; ++i) {
-            for (int j = 1; j < numY - 1; ++j) {
-                int idx = i * n + j;
-                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
-                float div = fabsf(fluid_attributes.u[(i + 1) * n + j] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx]);
-                cellDrawer.setPosition(i * fluid_attributes.cellSpacing, j * fluid_attributes.cellSpacing);
-
-                div /= maxDiv;
-
-                int redScale = 255 * (div);
-                int greenScale = 255 * (1.f - div);
-
-                cellDrawer.setFillColor(sf::Color(redScale, greenScale, 0));
-                window.draw(cellDrawer);
-            }
-        }
-    }
-
-    void drawActiveUVNodes(sf::RenderWindow& window) {
-        float dx = fluid_attributes.cellSpacing;
-
-        for (int i = 0; i < numX; ++i) {
-            for (int j = 0; j < numY; ++j) {
-                int idx = i * n + j;
-
-                bool activeSolidU = false;
-                bool activeSolidV = false;
-                bool airU = false;
-                bool airV = false;
-
-                if (i > 0 && ((fluid_attributes.cellType[idx] == FLUID_CELL && fluid_attributes.cellType[idx - n] == SOLID_CELL) || (fluid_attributes.cellType[idx - n] == FLUID_CELL && fluid_attributes.cellType[idx] == SOLID_CELL)))
-                    activeSolidU = true;
-                        
-                if ((fluid_attributes.cellType[idx] == FLUID_CELL && fluid_attributes.cellType[idx - 1] == SOLID_CELL) || (fluid_attributes.cellType[idx - 1] == FLUID_CELL && fluid_attributes.cellType[idx] == SOLID_CELL))
-                    activeSolidV = true;
-
-                if (fluid_attributes.cellType[idx] != FLUID_CELL && fluid_attributes.cellType[idx - n] != FLUID_CELL) 
-                    airU = true;
-
-                if (fluid_attributes.cellType[idx] != FLUID_CELL && fluid_attributes.cellType[idx - 1] != FLUID_CELL)
-                    airV = true;
-
-                if ((fluid_attributes.u[idx] != 0 || activeSolidU) && !airU) {
-                    float uX = i * dx - fluid_attributes.cellSpacing / 6;
-                    float uY = (j + 0.5f) * dx - fluid_attributes.cellSpacing / 6;
-                    circleDrawer.setPosition(uX, uY);
-                    circleDrawer.setFillColor(sf::Color(0, 80, 255)); // green for u
-                    window.draw(circleDrawer);
-                }
-
-                if ((fluid_attributes.v[idx] != 0 || activeSolidV) && !airV) {
-                    float vX = (i + 0.5f) * dx - fluid_attributes.cellSpacing / 6;
-                    float vY = j * dx - fluid_attributes.cellSpacing / 6;
-                    circleDrawer.setPosition(vX, vY);
-                    circleDrawer.setFillColor(sf::Color(255, 0, 0)); // red for v
-                    window.draw(circleDrawer);
-                }
-            }
-        }
-    }
-
     void drawObstacles(sf::RenderWindow& window) {
         window.draw(obstacleVa, obstacleStates);
     }
@@ -1194,11 +1097,12 @@ public:
         ++steps;
 
         // order of need of implementation/optimization:
-            // 1) refactor all this messy code
+            // 1) implement zooming in and out (make a zoom object)
+            // 1.5) finish cleaning up all this code
             // 2) incompressibility -- implement MGPCG
             // 2.5) make a sampleVelocity(point) function so that you can do RK2 advection easier
             // 3) make it so that you pass in static arrays instead of just numbers of particles in the main file
-            // 4) level set & fast sweeping for separattion from obstacles
+            // 4) level set & fast sweeping for separation from obstacles, or DDA raycasting & making sure that collisions dont push particles into obstacles
             // 5) implement implicit density projection
             // 6) move divergence view into a vertex array
             // 7) updateDensity -- Same idea as to grid -- low priority
@@ -1271,7 +1175,6 @@ public:
 
         start = std::chrono::high_resolution_clock::now();
         solveCollisions();
-        //solveCollisions();
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -1328,7 +1231,7 @@ public:
         }
 
         if (fluid_attributes.vorticityStrength != 0) {
-            //this->applyVorticityConfinementRedBlack();
+            this->applyVorticityConfinementRedBlack();
         }
         
         end = std::chrono::high_resolution_clock::now();
@@ -1385,18 +1288,22 @@ public:
             fluid_renderer.UpdateVaTemperatureMulti();
         }
         else if (renderPattern == 4) {
-            this->DrawDivergences(window);
-            this->drawActiveUVNodes(window);
+            fluid_renderer.DrawDivergences(window);
+            fluid_renderer.drawActiveUVNodes(window);
         }
         else if (renderPattern == 5) {
             fluid_renderer.UpdateVaCustomMulti();
         }
 
-        this->drawObstacles(window);
-
         if (renderPattern != 4) {
             fluid_renderer.DrawParticles();
         }
+
+        this->drawObstacles(window);
+
+        /*if (renderPattern != 4) { // uncomment in debug
+            fluid_renderer.DrawParticles();
+        }*/
 
         if (forceObjectActive) {
             this->drawForceObject(window);
