@@ -72,7 +72,7 @@ public:
         });
     }
 
-    void updateParticleDensityMulti() {
+    void updateCellDensitiesMulti() {
         std::fill(begin(fluid_attributes.cellDensities), end(fluid_attributes.cellDensities), 0.f);
         for (auto& vec : threadDensities) {
             std::fill(vec.begin(), vec.end(), 0.f);
@@ -82,7 +82,7 @@ public:
             int start = i * fluid_attributes.particlesPerThread;
             int end = (i == fluid_attributes.numThreads - 1) ? start + fluid_attributes.particlesPerThread + fluid_attributes.numMissedParticles : start + fluid_attributes.particlesPerThread;
             fluid_attributes.thread_pool.addTask([this, start, end, i] {
-                updateParticleDensityFrom(start, end, i);
+                updateCellDensities(start, end, i);
             });
         }
 
@@ -109,18 +109,16 @@ private:
         px = clamp(px, fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
         py = clamp(py, fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
 
-        // x0 is the grid position to the left of the particle, x1 is the position to the right of the particle. Both can only go up to the second to last cell to the right in the grid because we dont want to be changing wall velocities
+        // x0 is the grid position to the left of the particle, x1 is the position to the right of the particle
         int x0 = std::max(1, std::min(static_cast<int>(std::floor((px - dx) * invSpacing)), fluid_attributes.numX - 2)); // - 1
-        // basically x - xCell to get the weight of that cell in relation to the particle
-        // in this case, x is moved over to x - dx, and xCell is just grid position of x multiplied by grid spacing
+        // x - xCell to get the lerp weight of that cell in relation to the particle
         float tx = ((px - dx) - x0 * fluid_attributes.cellSpacing) * invSpacing;
-        // add 1 to get the cell to the right
         int x1 = std::min(x0 + 1, fluid_attributes.numX - 2); // - 1
-        // this fixes a bug that makes water touching the left wall and ceiling explode sometimes -> doesn't allow x - offset to sample out of bounds
-        if (component == 0 && x0 == 1) {
+        // this fixes a bug that makes water touching the left wall and ceiling explode sometimes -> doesn't allow pos - offset to sample out of bounds
+        if (component == 0 && x0 == 1) { // ceiling
             x0 = x1;
         }
-        if (component == 1 && x0 == 1) {
+        if (component == 1 && x0 == 1) { // wall
             x1 = x0;
         }
         // same thing with y
@@ -131,18 +129,17 @@ private:
         float sx = 1.f - tx;
         float sy = 1.f - ty;
 
-        // weights for each corner in u/v field
         int gIdx = 2 * pIdx + component;
-
-        d0[gIdx] = sx * sy;
-        d1[gIdx] = tx * sy;
-        d2[gIdx] = tx * ty;
-        d3[gIdx] = sx * ty;
+        // weights for each corner in u/v field
+        d0[gIdx] = sx * sy; //* fluid_attributes.particle_densities[pIdx];
+        d1[gIdx] = tx * sy; //* fluid_attributes.particle_densities[pIdx];
+        d2[gIdx] = tx * ty; //* fluid_attributes.particle_densities[pIdx];
+        d3[gIdx] = sx * ty; //* fluid_attributes.particle_densities[pIdx];
 
         nr0[gIdx] = x0 * n + y0; // top left
         nr1[gIdx] = x1 * n + y0; // top right
         nr2[gIdx] = x1 * n + y1; // bottom right
-        nr3[gIdx] = x0 * n + y1; //bottom left
+        nr3[gIdx] = x0 * n + y1; // bottom left
     }
 
     // make nr0 a vector of arrays of size whatever RK you need
@@ -186,6 +183,7 @@ private:
         }
 
         // initialize all cells that particles are in to fluid
+        fluid_attributes.num_fluid_cells = 0;
         for (int i = 0; i < fluid_attributes.num_particles; ++i) {
             float x = fluid_attributes.positions[2 * i];
             float y = fluid_attributes.positions[2 * i + 1];
@@ -196,6 +194,8 @@ private:
             int cellNr = xi * n + yi;
             if (fluid_attributes.cellType[cellNr] == AIR_CELL) {
                 fluid_attributes.cellType[cellNr] = FLUID_CELL;
+                fluid_attributes.fluidCellPositions[fluid_attributes.num_fluid_cells] = sf::Vector2i{xi, yi};
+                fluid_attributes.num_fluid_cells++;
             }
         }
 
@@ -467,7 +467,7 @@ private:
         }
     }
 
-    void updateParticleDensityFrom(int start, int end, int threadID) {
+    void updateCellDensities(int start, int end, int threadID) {
         for (int i = start; i < end; ++i) {
             float x = fluid_attributes.positions[2 * i];
             float y = fluid_attributes.positions[2 * i + 1];
@@ -515,4 +515,31 @@ private:
         });
     }
 
+    /*void updateParticleDensities(int start, int end) {
+        for (int i = start; i < end; ++i) {
+            float px = clamp(fluid_attributes.positions[2 * i], fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
+            float py = clamp(fluid_attributes.positions[2 * i + 1], fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
+
+            int x0 = std::max(1, std::min((int)std::floor(px * invSpacing), fluid_attributes.numX - 2));
+            int y0 = std::max(1, std::min((int)std::floor(py * invSpacing), fluid_attributes.numY - 2));
+            int x1 = x0 + 1;
+            int y1 = y0 + 1;
+
+            int topL = x0 * n + y0;
+            int topR = x1 * n + y0;
+            int botL = x0 * n + y1;
+            int botR = x1 * n + y1;
+
+            float tx = (px - x0 * fluid_attributes.cellSpacing) * invSpacing;
+            float ty = (py - y0 * fluid_attributes.cellSpacing) * invSpacing;
+            float sx = 1.f - tx;
+            float sy = 1.f - ty;
+
+            fluid_attributes.densities[i] = 0.f;
+            fluid_attributes.densities[i] += sx * sy * fluid_attributes.cellDensities[topL];
+            fluid_attributes.densities[i] += tx * sy * fluid_attributes.cellDensities[topR];
+            fluid_attributes.densities[i] += sx * ty * fluid_attributes.cellDensities[botL];
+            fluid_attributes.densities[i] += tx * ty * fluid_attributes.cellDensities[botR];
+        }
+    }*/
 };
