@@ -1,4 +1,5 @@
 #pragma once
+#include <SFML/Graphics.hpp>
 #include <vector>
 #include <cmath>
 
@@ -15,7 +16,11 @@ struct FluidState {
     std::vector<float> dv;
     std::vector<float> prevU;
     std::vector<float> prevV;
-    std::vector<float> cellDensities;
+    std::vector<float> cellDensities;       // density at each cell center
+    std::vector<sf::Vector2i> fluidCellPositions;
+    //std::vector<std::array<float, 4>> Cp;
+    //std::vector<float> densities;           // density at each particle
+    //std::vector<float> particle_densities;  // density of each particle
     float cellSpacing;
     float radius;
     int numX;
@@ -23,6 +28,7 @@ struct FluidState {
     float WIDTH;
     float HEIGHT;
     int gridSize;
+    int num_fluid_cells;
 
     float particleRestDensity;
 
@@ -37,10 +43,10 @@ struct FluidState {
 
     bool fireActive = false;
     std::vector<float> temperatures;
-    float groundConductivity = 30000.f;  // how quickly the ground transfers heat to the particles
+    float groundConductivity = 20000.f;  // how quickly the ground transfers heat to the particles
     float interConductivity = 10000.f;    // how quickly particles transfer heat between themselves
-    float fireStrength = 175.f;         // how quickly particles accelerate upwards due to heat
-    float tempDiffusion = 0.1f;        // how quickly particles lose heat
+    float fireStrength = 75.f;         // how quickly particles accelerate upwards due to heat
+    float tempDiffusion = 50.f;        // how quickly particles lose heat
 
     int FLUID_CELL = 0;
     int AIR_CELL = 1;
@@ -70,10 +76,18 @@ struct FluidState {
         prevU.resize(gridSize);
         prevV.resize(gridSize);
         cellDensities.resize(gridSize);
+        fluidCellPositions.resize(gridSize);
+        /*densities.resize(num_particles);
+        particle_densities.resize(num_particles);*/
 
         numThreads = thread_pool.m_thread_count;
         particlesPerThread = num_particles / numThreads;
         numMissedParticles = num_particles - particlesPerThread * numThreads;
+
+        // initialize all attributes you need to initialize for particles before sim starts
+        /*for (int i = 0; i < num_particles; ++i) {
+            particle_densities[i] = (i < num_particles / 2) ? 0.9f : 0.1f;
+        }*/
 
         // initializing particle positions
         float separation = 2.1; 
@@ -105,6 +119,10 @@ struct FluidState {
                 offset = !offset;
             }
         }
+    }
+
+    int getNumParticles() {
+        return this->num_particles;
     }
 
     bool getStop() {
