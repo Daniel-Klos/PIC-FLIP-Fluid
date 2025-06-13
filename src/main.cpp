@@ -24,27 +24,29 @@ int main()
     // seperationinit is the starting seperation for the particles. make sure that no particles are intersecting and no particles are outside of the bounds of the sim upon initialization. you want them to be evenly spaced out at the start so that a good density sample can be taken
     // vorticitystrength is how strong vorticity confinement forces are if you choose to include that in the sim 
 
-    // multithread
-    int numParticles = 5000; 
-    float gravityX = 5500.f; // 5500
-    float gravityY = 0.f;
+    // multithread -- low power mode
+    int numParticles = 20000; 
+    float gravityY = 5500.f; // 5500
+    float gravityX = 0.f;
     float divergenceModifier = 10.f; // 8 
-    int gridNumX = 225; // 100, 150, 200
+    int gridNumX = 350; // 350
+    int numPressureIters = 30; // 40 
+    float diffusionRatio = 0.75f; 
+    float flipRatio = 0.9f;
+    float vorticityStrength = 0.f;
+    uint32_t numThreads = 6; // 6
+
+    // single thread
+    /*int numParticles = 5000; 
+    float gravityY = 5500.f; // 5500
+    float gravityX = 0.f;
+    float divergenceModifier = 10.f; // 8 
+    int gridNumX = 300; 
     int numPressureIters = 30; // 40 
     float diffusionRatio = 0.75f; 
     float flipRatio = 0.9f;
     float vorticityStrength = 250.f;
-
-    // single thread
-    /*int numParticles = 5000; 
-    float gravityX = 5500.f; // 5500
-    float gravityY = 0.f;
-    float divergenceModifier = 10.f; // 8 
-    int gridNumX = 125; // 100, 150, 200
-    int numPressureIters = 30; // 40 
-    float diffusionRatio = 0.75f; 
-    float flipRatio = 0.9f;
-    float vorticityStrength = 250.f;*/
+    uint32_t numThreads = 1; // 6*/
 
     sf::Font font;
     font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
@@ -93,7 +95,7 @@ int main()
 
     const uint32_t maxThreads = std::thread::hardware_concurrency();
 
-    const uint32_t numThreads = std::min(static_cast<uint32_t>(16), maxThreads); // 11
+    numThreads = std::min(numThreads, maxThreads); // 10, 11, 16
 
     tp::ThreadPool thread_pool(numThreads);
 
@@ -101,13 +103,13 @@ int main()
 
     FluidState fluid_attributes = FluidState(numParticles, WIDTH, HEIGHT, gridNumX, vorticityStrength, flipRatio, gravityX, gravityY, thread_pool);
 
-    PressureSolver pressure_solver = PressureSolver(fluid_attributes, numPressureIters);
+    PressureSolver pressure_solver = PressureSolver(fluid_attributes, divergenceModifier, numPressureIters);
 
     TransferGrid transfer_grid = TransferGrid(fluid_attributes);
 
     FluidRenderer fluid_renderer = FluidRenderer(fluid_attributes, window);
 
-    FluidHandler fluid = FluidHandler(divergenceModifier, overRelaxation, numPressureIters, fluid_attributes, pressure_solver, transfer_grid, fluid_renderer);
+    FluidHandler fluid = FluidHandler(fluid_attributes, pressure_solver, transfer_grid, fluid_renderer);
 
     bool justPressed = false;
 
@@ -207,28 +209,28 @@ int main()
                     fluid.setSolidDrawer(true);
                 }
                 else if (event.key.code == sf::Keyboard::G) {
-                    fluid_attributes.addToGravityX(100);
+                    fluid_attributes.addToGravityY(100);
                     oss2.str("");  
                     oss2.clear();
-                    oss2 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityX();
+                    oss2 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityY();
                 }
                 else if (event.key.code == sf::Keyboard::N) {
-                    fluid_attributes.addToGravityX(-100);
+                    fluid_attributes.addToGravityY(-100);
                     oss2.str("");  
                     oss2.clear();
-                    oss2 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityX();
+                    oss2 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityY();
                 }
                 else if (event.key.code == sf::Keyboard::M) {
-                    fluid_attributes.addToGravityY(100);
+                    fluid_attributes.addToGravityX(100);
                     oss6.str("");  
                     oss6.clear();
-                    oss6 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityY();
+                    oss6 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityX();
                 }
                 else if (event.key.code == sf::Keyboard::H) {
-                    fluid_attributes.addToGravityY(-100);
+                    fluid_attributes.addToGravityX(-100);
                     oss6.str("");  
                     oss6.clear();
-                    oss6 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityY();
+                    oss6 << std::fixed << std::setprecision(0) << fluid_attributes.getGravityX();
                 }
                 else if (event.key.code == sf::Keyboard::C) {
                     if (pressure_solver.getDivergenceModifier() > 0) {
@@ -251,17 +253,17 @@ int main()
                     fluid_attributes.setFireActive(!fluid_attributes.getFireActive());
                 }
                 else if (event.key.code == sf::Keyboard::Q) {
-                    /*std::cout << 
-                    /*"Fill Grid: " << fluid.getFillGridTime() << "\n" <<
+                    std::cout << 
+                    "Fill Grid: " << fluid.getFillGridTime() << "\n" <<
                     "Miscellaneous: " << fluid.getMiscellaneousTime() << "\n" <<
                     "Collision: " << fluid.getCollisionTime() << "\n" <<
-                    "Obstacle Collision: " << fluid.getObstacleCollisionTime() << "\n" <<*/
-                    /*"To Grid: " << fluid.getToGridTime() << "\n";// <<*/
-                    /*"Density Update: " << fluid.getDensityUpdateTime() << "\n" <<
+                    "Obstacle Collision: " << fluid.getObstacleCollisionTime() << "\n" <<
+                    "To Grid: " << fluid.getToGridTime() << "\n" <<
+                    "Density Update: " << fluid.getDensityUpdateTime() << "\n" <<
                     "Projection: " << fluid.getProjectionTime() << "\n" <<
                     "To Particles: " << fluid.getToParticlesTime() << "\n" <<
-                    "Rendering: " << fluid.getRenderingTime() << "\n" <<*/
-                    /*"Whole Step: " << fluid.getSimStepTime() << "\n"; <<
+                    "Rendering: " << fluid.getRenderingTime() << "\n";/* <<
+                    "Whole Step: " << fluid.getSimStepTime() << "\n" <<
                     "Combined: " << fluid.getCombinedTime() << "\n" <<
                     "Before Sim Step: " << beforeSimStep << "\n" <<
                     "After Sim Step: " << afterSimStep << "\n";*/
