@@ -11,7 +11,7 @@ Controls:
     - While in temperature rendering mode, press f to turn on fire mode
 -   Press q to exit the simulation
 
-The simulation is able to run over 150k particles at 60 fps
+The simulation is able to run over 200k particles at 60 fps
 
 ![Screenshot 2025-05-31 144513](https://github.com/user-attachments/assets/9998471c-b16c-45f5-b34b-5f588ca8f96a)
 
