@@ -13,13 +13,13 @@ struct FluidRenderer {
     float invSpacing;
     int32_t renderPattern = 0;
 
-    float diffusionRatio = 0.85f;
+    float diffusionRatio = 0.75f;
 
     sf::RenderWindow &window;
 
     sf::VertexArray va{sf::PrimitiveType::Quads};
     sf::Texture circle_texture;
-    sf::RenderStates states;
+    sf::RenderStates fluidStates;
     std::vector<sf::Vertex> vaCopy;
     sf::Vector2f circle_texture_size;
 
@@ -30,9 +30,6 @@ struct FluidRenderer {
     sf::Texture cellTexture;
     sf::RenderStates cellStates;
     sf::Vector2f cell_texture_size;
-
-    sf::VertexArray uvVa{sf::PrimitiveType::Quads};
-    sf::RenderStates uvStates;
 
     std::vector<float> particleColors;
     std::vector<int32_t> collisions;
@@ -84,7 +81,7 @@ struct FluidRenderer {
             vaCopy[i + 2].texCoords = {circle_texture_size.x, circle_texture_size.y};
             vaCopy[i + 3].texCoords = {0.f, circle_texture_size.y};
         }
-        states.texture = &circle_texture;
+        fluidStates.texture = &circle_texture;
 
 
         cellTexture.loadFromFile("gray_square.png");
@@ -319,7 +316,7 @@ struct FluidRenderer {
     }
 
     void DrawParticles() {
-        window.draw(va, states);
+        window.draw(va, fluidStates);
     }
 
     void updateDivergenceVa(int start, int end, float maxDiv) {

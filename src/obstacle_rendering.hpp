@@ -6,6 +6,8 @@
 #include "simulation_state.hpp"
 #include "utils.hpp"
 
+class SceneRenderer;
+
 struct ObstacleRenderer {
     FluidState &fluid_attributes;
 
@@ -20,6 +22,8 @@ struct ObstacleRenderer {
 
     sf::RectangleShape pencil;
 
+    float pencilSeparationX;
+    float pencilSeparationY;
     int n;
 
     ObstacleRenderer(FluidState &fas, sf::RenderWindow &w): fluid_attributes(fas), window(w) {
@@ -27,6 +31,8 @@ struct ObstacleRenderer {
         pencil.setOrigin(fluid_attributes.halfSpacing, fluid_attributes.halfSpacing);
         pencil.setOutlineThickness(1);
         pencil.setOutlineColor(sf::Color::Black);
+        pencilSeparationX = fluid_attributes.cellSpacing;
+        pencilSeparationY = fluid_attributes.cellSpacing;
     }
 
     void render_obstacles() {
@@ -34,12 +40,16 @@ struct ObstacleRenderer {
     }
 
     void drawPencil(int pencilRadius) {
-        int localX = static_cast<int>(fluid_attributes.frame_context.mouseX / fluid_attributes.cellSpacing);
-        int localY = static_cast<int>(fluid_attributes.frame_context.mouseY / fluid_attributes.cellSpacing);
+        /*int localX = static_cast<int>(fluid_attributes.frame_context.screen_mouse_pos.x / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(fluid_attributes.frame_context.screen_mouse_pos.y / fluid_attributes.cellSpacing);
         int idx = localX * fluid_attributes.n + localY;
 
         float drawPosX = localX * fluid_attributes.cellSpacing + fluid_attributes.halfSpacing;
-        float drawPosY = localY * fluid_attributes.cellSpacing + fluid_attributes.halfSpacing;
+        float drawPosY = localY * fluid_attributes.cellSpacing + fluid_attributes.halfSpacing;*/
+
+        sf::Vector2f localPos = fluid_attributes.frame_context.simulation_mouse_pos;
+
+        sf::Vector2f drawPos = localPos * fluid_attributes.cellSpacing + sf::Vector2f{fluid_attributes.halfSpacing, fluid_attributes.halfSpacing};
 
         if (fluid_attributes.frame_context.leftMouseDown || !fluid_attributes.frame_context.rightMouseDown) {
             pencil.setFillColor(sf::Color(0, 150, 0));
@@ -50,16 +60,12 @@ struct ObstacleRenderer {
 
         for (int i = -pencilRadius; i <= pencilRadius; ++i) {
             for (int j = -pencilRadius; j <= pencilRadius; ++j) {
-                if (localX + i > 0 && localY + j > 0 && localX + i < fluid_attributes.numX - 1 && localY + j < fluid_attributes.numY - 1) {
-                    pencil.setPosition(drawPosX + i * fluid_attributes.cellSpacing, drawPosY + j * fluid_attributes.cellSpacing);
+                if (localPos.x + i > 0 && localPos.y + j > 0 && localPos.x + i < fluid_attributes.numX - 1 && localPos.y + j < fluid_attributes.numY - 1) {
+                    pencil.setPosition(drawPos.x + i * pencilSeparationX, drawPos.y + j * pencilSeparationY);
                     window.draw(pencil);
                 }
             }
         }
-    }
-
-    void drawObjects() {
-
     }
 
 };

@@ -104,9 +104,13 @@ struct SceneHandler {
     }
 
     void simulate(float dt_, bool leftMouseDown, bool rightMouseDown, bool justPressed) {
-        sf::Vector2i mouse_pos = sf::Mouse::getPosition(window);
-        fluid_attributes.frame_context.mouseX = mouse_pos.x;
-        fluid_attributes.frame_context.mouseY = mouse_pos.y;
+        sf::Vector2i mouse_position = sf::Mouse::getPosition(window);
+
+        fluid_attributes.frame_context.screen_mouse_pos = sf::Vector2f{static_cast<float>(mouse_position.x), static_cast<float>(mouse_position.y)};
+        fluid_attributes.frame_context.world_mouse_pos = scene_renderer.screenToWorld(fluid_attributes.frame_context.screen_mouse_pos);
+        fluid_attributes.frame_context.simulation_mouse_pos = fluid_attributes.frame_context.screen_mouse_pos;
+            
+        fluid_attributes.frame_context.simulation_mouse_pos = scene_renderer.screenToWorld(fluid_attributes.frame_context.screen_mouse_pos);
 
         fluid_attributes.frame_context.leftMouseDown = leftMouseDown;
         fluid_attributes.frame_context.rightMouseDown = rightMouseDown;
@@ -115,17 +119,12 @@ struct SceneHandler {
         fluid_attributes.frame_context.dt = dt_;
         
         if (!fluid_attributes.stop || fluid_attributes.step) {
-            //auto start = std::chrono::high_resolution_clock::now();
-            
             update_environment();
             fluid_attributes.step = false;
-
-            /*auto end = std::chrono::high_resolution_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-            addValueToAverage(SimStepTime, duration.count());*/
         }
 
-        render();
+        scene_renderer.render_scene();
+        render_objects();
     }
 
     void update_environment() {
@@ -135,6 +134,7 @@ struct SceneHandler {
             // 1) implement zooming in and out (make a zoom object)
                 // 1) compute num_in_view (thread buffers) and fill a boolean array of the particle being in view or not AND THEN fill a vector in_view, which can be resized and then filled in parallel. Just insert this logic into existing loops
             // 2) move event handling into scene_handler
+            // 2) add a way to switch between particle view and liquid glass view
             // 2) Thread buffers EVERYWHERE
             // 3) finish cleaning up all this code
             // 4) incompressibility -- implement MGPCG
@@ -254,8 +254,8 @@ struct SceneHandler {
 
         start = std::chrono::high_resolution_clock::now();
         
-        if (fluid_handler.rigidObjectActive) {
-            fluid_handler.includeRigidObject(fluid_attributes.frame_context.leftMouseDown, fluid_attributes.frame_context.justPressed);
+        if (fluid_handler.dragObjectActive) {
+            fluid_handler.includeDragObject(fluid_attributes.frame_context.leftMouseDown, fluid_attributes.frame_context.justPressed);
         }
 
         if (fluid_attributes.vorticityStrength != 0) {
@@ -295,11 +295,13 @@ struct SceneHandler {
         addValueToAverage(ToParticlesTime, duration.count(), steps);
     }
 
-    void render() {
-        fluid_handler.fluid_renderer.render_fluid();
-        obstacle_handler.obstacle_renderer.render_obstacles();
+    void render_objects() {
         fluid_handler.render_objects(window);
-        obstacle_handler.obstacle_renderer.drawObjects();
+        obstacle_handler.render_objects();
+    }
+
+    void zoom_objects() {
+
     }
 
     float getCombinedTime() {

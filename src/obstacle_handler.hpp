@@ -131,8 +131,8 @@ struct ObstacleHandler {
     }
 
     void drawSolids() {
-        int localX = static_cast<int>(fluid_attributes.frame_context.mouseX / fluid_attributes.cellSpacing);
-        int localY = static_cast<int>(fluid_attributes.frame_context.mouseY / fluid_attributes.cellSpacing);
+        int localX = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.x / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.y / fluid_attributes.cellSpacing);
 
         int numObstacles = fluid_attributes.obstaclePositions.size();
 
@@ -145,7 +145,7 @@ struct ObstacleHandler {
                 int x = localX + i;
                 int y = localY + j;
 
-                if (x % fluid_attributes.numX > 0 && y > 0 && x % fluid_attributes.numX < fluid_attributes.numX - 1 && y < fluid_attributes.numY - 1) {
+                if (x > 0 && y > 0 && x < fluid_attributes.numX - 1 && y < fluid_attributes.numY - 1) {
 
                     int idx = x * fluid_attributes.numY + y;
 
@@ -186,12 +186,12 @@ struct ObstacleHandler {
                 obstacle_renderer.obstacleVa[idx + 2].position = {px + fluid_attributes.halfSpacing, py + fluid_attributes.halfSpacing};
                 obstacle_renderer.obstacleVa[idx + 3].position = {px - fluid_attributes.halfSpacing, py + fluid_attributes.halfSpacing};
             }
-        }    
+        }  
     }
 
     void eraseSolids() {
-        int localX = static_cast<int>(fluid_attributes.frame_context.mouseX / fluid_attributes.cellSpacing);
-        int localY = static_cast<int>(fluid_attributes.frame_context.mouseY / fluid_attributes.cellSpacing);
+        int localX = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.x / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.y / fluid_attributes.cellSpacing);
 
         int numObstacles = fluid_attributes.obstaclePositions.size();
         int numFreedCells = 0;
@@ -201,7 +201,7 @@ struct ObstacleHandler {
                 int y = localY + j;
 
                 int idx = x * fluid_attributes.n + y;
-                if (fluid_attributes.cellType[idx] == fluid_attributes.SOLID_CELL && x > 0 && y > 0 && x < fluid_attributes.numX - 1 && y < fluid_attributes.numY - 1) {
+                if ((x >= 0 && y >= 0 && x <= fluid_attributes.numX - 1 && y <= fluid_attributes.numY - 1) && (fluid_attributes.cellType[idx] == fluid_attributes.SOLID_CELL && x > 0 && y > 0 && x < fluid_attributes.numX - 1 && y < fluid_attributes.numY - 1)) {
                     fluid_attributes.cellType[idx] = fluid_attributes.AIR_CELL;
                     // find the index of obstacleSet with the position we want to remove
                     // replace that index with the [numObstacles - (numFreedCells + 1)] index of obstacleSet

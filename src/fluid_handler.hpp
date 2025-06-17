@@ -20,15 +20,15 @@ class FluidHandler {
     float checkseparationDist;
     float moveDist;
 
-    float objectRadius;
-    float objectX;
-    float objectY;
-    float objectPrevX;
-    float objectPrevY;
-    sf::CircleShape objectDrawer;
-    float checkRigidObjectseparationDist;
-    float objectXVel = 0;
-    float objectYVel = 0;
+    float dragObjectRadius;
+    float dragObjectX;
+    float dragObjectY;
+    float dragObjectPrevX;
+    float dragObjectPrevY;
+    sf::CircleShape dragObjectDrawer;
+    float checkDragObjectseparationDist;
+    float dragObjectXVel = 0;
+    float dragObjectYVel = 0;
 
     float forceObjectRadius = 250; // 200
     sf::CircleShape forceObjectDrawer;
@@ -55,7 +55,7 @@ class FluidHandler {
 public:
 
     bool forceObjectActive = true;
-    bool rigidObjectActive = false;
+    bool dragObjectActive = false;
     bool generatorActive = false;
 
     std::vector<uint32_t> collisions;
@@ -83,15 +83,17 @@ public:
             this->moveDist = 2 * fluid_attributes.radius;
             this->checkseparationDist = moveDist * moveDist;
 
-            this->objectRadius = 50;//fluid_attributes.cellSpacing * 3;
-            this->objectX = std::floor(fluid_attributes.frame_context.WIDTH / 2);
-            this->objectY = 2 * objectRadius + 10;
-            this->objectPrevX = objectX;
-            this->objectPrevY = objectY;
-            this->objectDrawer.setOrigin(objectRadius, objectRadius);
-            this->objectDrawer.setRadius(objectRadius);
-            this->objectDrawer.setFillColor(sf::Color(255, 0, 0));
-            this->checkRigidObjectseparationDist = (fluid_attributes.radius + objectRadius) * (fluid_attributes.radius + objectRadius);
+            this->dragObjectRadius = 150;//fluid_attributes.cellSpacing * 3;
+            this->dragObjectX = std::floor(fluid_attributes.frame_context.WIDTH / 2);
+            this->dragObjectY = 2 * dragObjectRadius + 10;
+            this->dragObjectPrevX = dragObjectX;
+            this->dragObjectPrevY = dragObjectY;
+            this->dragObjectDrawer.setOrigin(dragObjectRadius, dragObjectRadius);
+            this->dragObjectDrawer.setRadius(dragObjectRadius);
+            this->dragObjectDrawer.setFillColor(sf::Color::Transparent);
+            this->dragObjectDrawer.setOutlineThickness(1.f);
+            this->dragObjectDrawer.setOutlineColor(sf::Color(255, 0, 0));
+            this->checkDragObjectseparationDist = (fluid_attributes.radius + dragObjectRadius) * (fluid_attributes.radius + dragObjectRadius);
 
             this->forceObjectDrawer.setOrigin(forceObjectRadius, forceObjectRadius);
             this->forceObjectDrawer.setRadius(forceObjectRadius);
@@ -248,8 +250,8 @@ public:
     void makeForceObjectQueries(const int32_t strength) {
         const int32_t numCovered = std::ceil(forceObjectRadius / scalingFactor);
 
-        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.mouseX / scalingFactor);
-        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.mouseY / scalingFactor);
+        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.x / scalingFactor);
+        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.y / scalingFactor);
 
         for (int32_t i = -numCovered; i < numCovered + 1; ++i) {
             for (int32_t j = -numCovered; j < numCovered + 1; ++j) {
@@ -261,8 +263,8 @@ public:
                 for (uint32_t i{0}; i < cell.objects_count; ++i) {
                     const uint32_t particleIndex = cell.objects[i];
 
-                    float dx = fluid_attributes.positions[particleIndex * 2] - fluid_attributes.frame_context.mouseX;
-                    float dy = fluid_attributes.positions[particleIndex * 2 + 1] - fluid_attributes.frame_context.mouseY;
+                    float dx = fluid_attributes.positions[particleIndex * 2] - fluid_attributes.frame_context.simulation_mouse_pos.x;
+                    float dy = fluid_attributes.positions[particleIndex * 2 + 1] - fluid_attributes.frame_context.simulation_mouse_pos.y;
                     float d2 = dx * dx + dy * dy;
 
                     if (d2 > checkForceObjectseparationDist || d2 == 0.0f) continue;
@@ -374,22 +376,23 @@ public:
         fluid_attributes.thread_pool.waitForCompletion();
     }
 
-    void includeRigidObject(const bool mouseDown, const bool justPressed) {
+    void includeDragObject(const bool mouseDown, const bool justPressed) {
         const float extend = 20 * fluid_attributes.cellSpacing;
         if (mouseDown) {
-            float vx = (objectX - objectPrevX) * 100;
-            float vy = (objectY - objectPrevY) * 100;
-            int objectCellX = objectX / fluid_attributes.cellSpacing;
-            int objectCellY = objectY / fluid_attributes.cellSpacing;
-            int objectCellRadius = std::ceil(objectRadius / fluid_attributes.cellSpacing);
+            float vx = (dragObjectX - dragObjectPrevX) * 120;
+            float vy = (dragObjectY - dragObjectPrevY) * 120;
+            int objectCellX = dragObjectX / fluid_attributes.cellSpacing;
+            int objectCellY = dragObjectY / fluid_attributes.cellSpacing;
+            int objectCellRadius = std::ceil(dragObjectRadius / fluid_attributes.cellSpacing);
             for (int i = objectCellX - objectCellRadius; i < objectCellX + objectCellRadius; i++) {
                 for (int j = objectCellY - objectCellRadius; j < objectCellY + objectCellRadius; j++) {
                     int cellNr = i * fluid_attributes.n + j;
-                    if (fluid_attributes.cellType[i * fluid_attributes.n + j] == fluid_attributes.SOLID_CELL) continue;
-                    float dx = (i + 0.5) * fluid_attributes.cellSpacing - objectX;
-                    float dy = (j + 0.5) * fluid_attributes.cellSpacing - objectY;
+                    bool inBounds = i < 0 || i > fluid_attributes.numX || j < 0 || j > fluid_attributes.numY;
+                    if (inBounds || (fluid_attributes.cellType[i * fluid_attributes.n + j] == fluid_attributes.SOLID_CELL)) continue;
+                    float dx = (i + 0.5) * fluid_attributes.cellSpacing - dragObjectX;
+                    float dy = (j + 0.5) * fluid_attributes.cellSpacing - dragObjectY;
 
-                    if (dx * dx + dy * dy < objectRadius * objectRadius + extend) {
+                    if (dx * dx + dy * dy < dragObjectRadius * dragObjectRadius + extend) {
                         //fluid_attributes.cellType[i * n + j] = FLUID_CELL;
                         
                         if (fluid_attributes.cellType[cellNr - fluid_attributes.n] != fluid_attributes.SOLID_CELL) {
@@ -407,26 +410,19 @@ public:
                     }
                 }
             }
-            objectPrevX = objectX;
-            objectPrevY = objectY;
-            objectX = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(fluid_attributes.frame_context.mouseX, fluid_attributes.frame_context.WIDTH - fluid_attributes.cellSpacing - objectRadius));
-            objectY = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(fluid_attributes.frame_context.mouseY, fluid_attributes.frame_context.HEIGHT - fluid_attributes.cellSpacing - objectRadius));
+            dragObjectPrevX = dragObjectX;
+            dragObjectPrevY = dragObjectY;
+            dragObjectX = fluid_attributes.frame_context.simulation_mouse_pos.x;
+            dragObjectY = fluid_attributes.frame_context.simulation_mouse_pos.y;
             if (justPressed) {
-                objectPrevX = objectX;
-                objectPrevY = objectY;
+                dragObjectPrevX = dragObjectX;
+                dragObjectPrevY = dragObjectY;
             }
         }
         else {
-            objectX = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(objectX, fluid_attributes.frame_context.WIDTH - fluid_attributes.cellSpacing - objectRadius));
-            objectY = std::max(fluid_attributes.cellSpacing + objectRadius, std::min(objectY, fluid_attributes.frame_context.HEIGHT - fluid_attributes.cellSpacing - objectRadius));
-            objectPrevX = objectX;
-            objectPrevY = objectY;
+            dragObjectPrevX = dragObjectX;
+            dragObjectPrevY = dragObjectY;
         }
-    }
-
-    void drawRigidObject(sf::RenderWindow& window) {
-        this->objectDrawer.setPosition(objectX, objectY);
-        window.draw(this->objectDrawer);
     }
 
     void generate() {
@@ -435,11 +431,11 @@ public:
         int highNum = wideNum;
         int numPotentiallyAdded = wideNum * highNum;
 
-        float generatorRightBound = fluid_attributes.frame_context.mouseX + generatorRadius;
-        float generatorBottomBound = fluid_attributes.frame_context.mouseY + generatorRadius;
+        float generatorRightBound = fluid_attributes.frame_context.simulation_mouse_pos.x + generatorRadius;
+        float generatorBottomBound = fluid_attributes.frame_context.simulation_mouse_pos.y + generatorRadius;
 
-        float starting_px = std::max(fluid_attributes.frame_context.mouseX - generatorRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
-        float starting_py = std::max(fluid_attributes.frame_context.mouseY - generatorRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
+        float starting_px = std::max(fluid_attributes.frame_context.simulation_mouse_pos.x - generatorRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
+        float starting_py = std::max(fluid_attributes.frame_context.simulation_mouse_pos.y - generatorRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
         float px = starting_px;
         float py = starting_py;
         bool offset = true;
@@ -468,9 +464,10 @@ public:
                 offset = !offset;
             }
 
-            if (fluid_attributes.cellType[cellNr] != fluid_attributes.AIR_CELL || prevPx - fluid_attributes.radius < fluid_attributes.cellSpacing || prevPx + fluid_attributes.radius > fluid_attributes.frame_context.WIDTH - fluid_attributes.cellSpacing || prevPy - fluid_attributes.radius < fluid_attributes.cellSpacing) {
+            if (cellX > fluid_attributes.numX || (fluid_attributes.cellType[cellNr] != fluid_attributes.AIR_CELL || prevPx - fluid_attributes.radius < fluid_attributes.cellSpacing || prevPx + fluid_attributes.radius > fluid_attributes.frame_context.WIDTH - fluid_attributes.cellSpacing || prevPy - fluid_attributes.radius < fluid_attributes.cellSpacing)) {
                 continue;
             }
+
 
             fluid_attributes.positions[2 * (fluid_attributes.num_particles + addedTo)] = prevPx;
             fluid_attributes.positions[2 * (fluid_attributes.num_particles + addedTo) + 1] = prevPy;
@@ -528,8 +525,8 @@ public:
 
     void remove() {
         const int32_t numCovered = std::ceil(generatorRadius / scalingFactor);
-        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.mouseX / scalingFactor);
-        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.mouseY / scalingFactor);
+        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.x / scalingFactor);
+        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.y / scalingFactor);
         const size_t len = fluid_attributes.temperatures.size();
         const size_t double_len = 2 * len;
         const size_t triple_len = fluid_renderer.particleColors.size();
@@ -620,14 +617,18 @@ public:
         transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
     }
 
+    void drawDragObject(sf::RenderWindow& window) {
+        this->dragObjectDrawer.setPosition(fluid_attributes.frame_context.screen_mouse_pos.x, fluid_attributes.frame_context.screen_mouse_pos.y);
+        window.draw(this->dragObjectDrawer);
+    }
 
     void drawGenerator(sf::RenderWindow& window) {
-        generatorDrawer.setPosition(fluid_attributes.frame_context.mouseX, fluid_attributes.frame_context.mouseY);
+        generatorDrawer.setPosition(fluid_attributes.frame_context.screen_mouse_pos.x, fluid_attributes.frame_context.screen_mouse_pos.y);
         window.draw(generatorDrawer);
     }
 
     void drawForceObject(sf::RenderWindow& window) {
-        forceObjectDrawer.setPosition(fluid_attributes.frame_context.mouseX, fluid_attributes.frame_context.mouseY);
+        forceObjectDrawer.setPosition(fluid_attributes.frame_context.screen_mouse_pos.x, fluid_attributes.frame_context.screen_mouse_pos.y);
         window.draw(forceObjectDrawer); 
     }
 
@@ -635,11 +636,19 @@ public:
         if (forceObjectActive) {
             this->drawForceObject(window);
         }
-        else if (rigidObjectActive) {
-            this->drawRigidObject(window);
+        else if (dragObjectActive) {
+            this->drawDragObject(window);
         }
         else if (generatorActive) {
             this->drawGenerator(window);
+        }
+    }
+
+    void addToDragObjectRadius(float add) {
+        if (dragObjectRadius + add > 0) {
+            this->dragObjectRadius += add;
+            this->dragObjectDrawer.setOrigin(dragObjectRadius, dragObjectRadius);
+            this->dragObjectDrawer.setRadius(dragObjectRadius);
         }
     }
 
@@ -660,6 +669,14 @@ public:
         }
     }
 
+    bool getDragObjectActive() {
+        return this->dragObjectActive;
+    }
+
+    void setDragObjectActive(bool set) {
+        this->dragObjectActive = set;
+    }
+
     bool getForceObjectActive() {
         return this->forceObjectActive;
     }
@@ -674,10 +691,6 @@ public:
 
     void setGeneratorActive(bool active) {
         this->generatorActive = active;
-    }
-
-    void setRigidObjectActive(bool active) {
-        this->rigidObjectActive = active;
     }
 
 };
