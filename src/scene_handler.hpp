@@ -15,6 +15,22 @@ struct SceneHandler {
     float mouseX;
     float mouseY;
 
+    sf::Clock deltaClock;
+    sf::Font font;
+    sf::Text text;
+    std::ostringstream flipRatio_OSS;
+    std::ostringstream gravityX_OSS;
+    std::ostringstream gravityY_OSS;
+    std::ostringstream k_OSS;
+    std::ostringstream vorticity_OSS;
+    std::ostringstream pressuerIters_OSS;
+    std::ostringstream numParticles_OSS;
+
+    int frame = 0;
+    float trueDT;
+    float setDT = 1.f / 120.f;
+    int fps;
+
     float steps = 0.f;
     float CollisionTime = 0.f;
     float ObstacleCollisionTime = 0.f;
@@ -63,7 +79,7 @@ struct SceneHandler {
         // ----------------------------------------------------------------------------------------------------------------------------
 
 
-
+        
         // initialize obstacle_renderer
         // ----------------------------------------------------------------------------------------------------------------------------
     
@@ -101,47 +117,81 @@ struct SceneHandler {
             scene_renderer.obstacle_renderer.obstacleVa[vaIdx + 3].position = {px - fluid_attributes.halfSpacing, py + fluid_attributes.halfSpacing};
         }
         // ----------------------------------------------------------------------------------------------------------------------------
+
+        
+        // initialize window
+        // ----------------------------------------------------------------------------------------------------------------------------
+        font.loadFromFile("C:\\Users\\dklos\\vogue\\Vogue.ttf");
+
+        
+        text.setFont(font);
+        text.setPosition(10, 10);
+        text.setFillColor(sf::Color::White);
+
+        
+        flipRatio_OSS << std::fixed << std::setprecision(2) << fluid_attributes.flipRatio; 
+
+        gravityX_OSS << std::fixed << std::setprecision(0) << fluid_attributes.gravityX; 
+
+        k_OSS << std::fixed << std::setprecision(1) << 10; 
+
+        vorticity_OSS << std::fixed << std::setprecision(1) << fluid_attributes.vorticityStrength; 
+
+        pressuerIters_OSS << std::fixed << std::setprecision(0) << 30; 
+
+        gravityY_OSS << std::fixed << std::setprecision(0) << fluid_attributes.gravityY; 
+
+        numParticles_OSS << std::fixed << std::setprecision(0) << fluid_attributes.num_particles; 
+
+        window.setFramerateLimit(120);
+        // ----------------------------------------------------------------------------------------------------------------------------
     }
 
-    void simulate(float dt_, bool leftMouseDown, bool rightMouseDown, bool justPressed) {
+    void simulate() {
+        window.clear();
+        
+        sf::Time deltaTime = deltaClock.restart();
+        trueDT = deltaTime.asSeconds();
+
         sf::Vector2i mouse_position = sf::Mouse::getPosition(window);
 
-        fluid_attributes.frame_context.screen_mouse_pos = sf::Vector2f{static_cast<float>(mouse_position.x), static_cast<float>(mouse_position.y)};
+        fluid_attributes.frame_context.screen_mouse_pos = sf::Vector2f  {static_cast<float>(mouse_position.x), static_cast<float>(mouse_position.y)};
         fluid_attributes.frame_context.world_mouse_pos = scene_renderer.screenToWorld(fluid_attributes.frame_context.screen_mouse_pos);
-        fluid_attributes.frame_context.simulation_mouse_pos = fluid_attributes.frame_context.screen_mouse_pos;
-            
+
+        fluid_attributes.frame_context.simulation_mouse_pos = fluid_attributes. frame_context.screen_mouse_pos;
         fluid_attributes.frame_context.simulation_mouse_pos = scene_renderer.screenToWorld(fluid_attributes.frame_context.screen_mouse_pos);
 
-        fluid_attributes.frame_context.leftMouseDown = leftMouseDown;
-        fluid_attributes.frame_context.rightMouseDown = rightMouseDown;
-        fluid_attributes.frame_context.justPressed = justPressed;
+        fluid_attributes.frame_context.dt = setDT;
 
-        fluid_attributes.frame_context.dt = dt_;
-        
+        track_events();
+            
         if (!fluid_attributes.stop || fluid_attributes.step) {
             update_environment();
             fluid_attributes.step = false;
         }
 
         scene_renderer.render_scene();
+
+        handle_zoom();
+
         render_objects();
+
+        display();
     }
 
     void update_environment() {
         ++steps;
 
         // order of need of implementation/optimization:
-            // 1) implement zooming in and out (make a zoom object)
-                // 1) compute num_in_view (thread buffers) and fill a boolean array of the particle being in view or not AND THEN fill a vector in_view, which can be resized and then filled in parallel. Just insert this logic into existing loops
-            // 2) move event handling into scene_handler
+            // 1) move event handling into scene_handler
             // 2) add a way to switch between particle view and liquid glass view
-            // 2) Thread buffers EVERYWHERE
-            // 3) finish cleaning up all this code
-            // 4) incompressibility -- implement MGPCG
+            // 3) Thread buffers EVERYWHERE
+            // 4) implement Multi Grid, then MGPCG
             // 5) make a sampleVelocity(point) function so that you can do RK2 advection easier
-            // 6) make it so that you pass in static arrays instead of just numbers of particles in the main file
-            // 7) level set & fast sweeping for separation from obstacles, or DDA raycasting & making sure that particle-particle collisions dont push particles into obstacles
-            // 8) implement implicit density projection
+            // 6) DDA raycasting & making sure that particle-particle collisions dont push particles into obstacles
+            // 7) implement implicit density projection
+            // 8) finish cleaning up all this code
+            // 9) make it so that you pass in static arrays instead of just numbers of particles in the main file
         
         auto start = std::chrono::high_resolution_clock::now();
 
@@ -255,7 +305,7 @@ struct SceneHandler {
         start = std::chrono::high_resolution_clock::now();
         
         if (fluid_handler.dragObjectActive) {
-            fluid_handler.includeDragObject(fluid_attributes.frame_context.leftMouseDown, fluid_attributes.frame_context.justPressed);
+            fluid_handler.includeDragObject();
         }
 
         if (fluid_attributes.vorticityStrength != 0) {
@@ -272,11 +322,8 @@ struct SceneHandler {
 
         //start = std::chrono::high_resolution_clock::now();
         
-        //pressure_solver.projectMICCG(pressure_solver.numPressureIters);
-        //pressure_solver.projectSOR(pressure_solver.numPressureIters);
-        //pressure_solver.projectRedBlackGS(pressure_solver.numPressureIters);
-        fluid_handler.pressure_solver.projectRedBlackGSMulti(fluid_handler.pressure_solver.numPressureIters, fluid_attributes.numThreads);
-        //pressure_solver.projectCG(pressure_solver.numPressureIters);
+        fluid_handler.pressure_solver.projectRedBlackGSMulti(fluid_attributes.numThreads);
+        //fluid_handler.pressure_solver.projectCG();
 
         end = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
@@ -295,13 +342,295 @@ struct SceneHandler {
         addValueToAverage(ToParticlesTime, duration.count(), steps);
     }
 
+    void track_events() {
+        //auto start = std::chrono::high_resolution_clock::now();
+
+        sf::Event event;
+        while (window.pollEvent(event))
+        {
+            if (event.type == sf::Event::Closed) {
+            window.close();
+            }
+            else if (event.type == sf::Event::KeyPressed) {
+                if (event.key.code == sf::Keyboard::B) {
+                    if (fluid_attributes.getFlipRatio() < 0.99f) {
+                        fluid_attributes.addToFlipRatio(0.01);
+                        flipRatio_OSS.str("");  
+                        flipRatio_OSS.clear();
+                        flipRatio_OSS << std::fixed << std::setprecision(2) << fluid_attributes.getFlipRatio(); 
+                    }
+                }
+                else if (event.key.code == sf::Keyboard::S) {
+                    if (fluid_attributes.getFlipRatio() > 0.01) {
+                        fluid_attributes.addToFlipRatio(-0.01);
+                        flipRatio_OSS.str("");  
+                        flipRatio_OSS.clear();
+                        flipRatio_OSS << std::fixed << std::setprecision(2) << fluid_attributes.getFlipRatio();
+                    }
+                }
+                else if (event.key.code == sf::Keyboard::E) {
+                    fluid_attributes.addToVorticityStrength(10);
+                    vorticity_OSS.str("");  
+                    vorticity_OSS.clear();
+                    vorticity_OSS << std::fixed << std::setprecision(1) << fluid_attributes.getVorticityStrength(); 
+                }
+                else if (event.key.code == sf::Keyboard::W) {
+                    if (fluid_attributes.getVorticityStrength() - 10 >= 0.f) {
+                        fluid_attributes.addToVorticityStrength(-10);
+                        vorticity_OSS.str("");  
+                        vorticity_OSS.clear();
+                        vorticity_OSS << std::fixed << std::setprecision(1) << fluid_attributes.getVorticityStrength();
+                    }
+                }
+                else if (event.key.code == sf::Keyboard::P) {
+                    fluid_handler.pressure_solver.addToNumPressureIters(1);
+                    pressuerIters_OSS.str("");  
+                    pressuerIters_OSS.clear();
+                    pressuerIters_OSS << std::fixed << std::setprecision(0) << fluid_handler.pressure_solver.getNumPressureIters(); 
+                }
+                else if (event.key.code == sf::Keyboard::O) {
+                    if (fluid_handler.pressure_solver.getNumPressureIters() > 0) {
+                        fluid_handler.pressure_solver.addToNumPressureIters(-1);
+                        pressuerIters_OSS.str("");  
+                        pressuerIters_OSS.clear();
+                        pressuerIters_OSS << std::fixed << std::setprecision(0) << fluid_handler.pressure_solver.getNumPressureIters();
+                    }
+                }
+                else if (event.key.code == sf::Keyboard::R) {
+                    scene_renderer.reset_zoom();
+                }
+                else if (event.key.code == sf::Keyboard::Num1) {
+                    fluid_handler.setDragObjectActive(true);
+                    fluid_handler.setForceObjectActive(false);
+                    fluid_handler.setGeneratorActive(false);
+                    obstacle_handler.setSolidDrawer(false);
+                    scene_renderer.setZoomObjectActive(false);
+                }
+                else if (event.key.code == sf::Keyboard::Num2) {
+                    fluid_handler.setDragObjectActive(false);
+                    fluid_handler.setForceObjectActive(true);
+                    fluid_handler.setGeneratorActive(false);
+                    obstacle_handler.setSolidDrawer(false);
+                    scene_renderer.setZoomObjectActive(false);
+                }
+                else if (event.key.code == sf::Keyboard::Num3) {
+                    fluid_handler.setDragObjectActive(false);
+                    fluid_handler.setForceObjectActive(false);
+                    fluid_handler.setGeneratorActive(true);
+                    obstacle_handler.setSolidDrawer(false);
+                    scene_renderer.setZoomObjectActive(false);
+                }
+                else if (event.key.code == sf::Keyboard::Num4) {
+                    fluid_handler.setDragObjectActive(false);
+                    fluid_handler.setForceObjectActive(false);
+                    fluid_handler.setGeneratorActive(false);
+                    obstacle_handler.setSolidDrawer(true);
+                    scene_renderer.setZoomObjectActive(false);
+                }
+                else if (event.key.code == sf::Keyboard::Num5) {
+                    fluid_handler.setDragObjectActive(false);
+                    fluid_handler.setForceObjectActive(false);
+                    fluid_handler.setGeneratorActive(false);
+                    obstacle_handler.setSolidDrawer(false);
+                    scene_renderer.setZoomObjectActive(true);
+                }
+                else if (event.key.code == sf::Keyboard::G) {
+                    fluid_attributes.addToGravityY(100);
+                    gravityY_OSS.str("");  
+                    gravityY_OSS.clear();
+                    gravityY_OSS << std::fixed << std::setprecision(0) << fluid_attributes.getGravityY();
+                }
+                else if (event.key.code == sf::Keyboard::N) {
+                    fluid_attributes.addToGravityY(-100);
+                    gravityY_OSS.str("");  
+                    gravityY_OSS.clear();
+                    gravityY_OSS << std::fixed << std::setprecision(0) << fluid_attributes.getGravityY();
+                }
+                else if (event.key.code == sf::Keyboard::M) {
+                    fluid_attributes.addToGravityX(100);
+                    gravityX_OSS.str("");  
+                    gravityX_OSS.clear();
+                    gravityX_OSS << std::fixed << std::setprecision(0) << fluid_attributes.getGravityX();
+                }
+                else if (event.key.code == sf::Keyboard::H) {
+                    fluid_attributes.addToGravityX(-100);
+                    gravityX_OSS.str("");  
+                    gravityX_OSS.clear();
+                    gravityX_OSS << std::fixed << std::setprecision(0) << fluid_attributes.getGravityX();
+                }
+                else if (event.key.code == sf::Keyboard::C) {
+                    if (fluid_handler.pressure_solver.getDivergenceModifier() > 0) {
+                        fluid_handler.pressure_solver.addToDivergenceModifier(-1);
+                    }
+                    k_OSS.str("");  
+                    k_OSS.clear();
+                    k_OSS << std::fixed << std::setprecision(1) << fluid_handler.pressure_solver.getDivergenceModifier();
+                }
+                else if (event.key.code == sf::Keyboard::D) {
+                    fluid_handler.pressure_solver.addToDivergenceModifier(1);
+                    k_OSS.str("");  
+                    k_OSS.clear();
+                    k_OSS << std::fixed << std::setprecision(1) << fluid_handler.pressure_solver.getDivergenceModifier();
+                }
+                else if (event.key.code == sf::Keyboard::A) {
+                    scene_renderer.fluid_renderer.setNextRenderPattern();
+                }
+                else if (event.key.code == sf::Keyboard::F) {
+                    fluid_attributes.setFireActive(!fluid_attributes.getFireActive());
+                }
+                else if (event.key.code == sf::Keyboard::Q) {
+                    std::cout << 
+                    "Fill Grid: " << getFillGridTime() << "\n" <<
+                    "Miscellaneous: " << getMiscellaneousTime() << "\n" <<
+                    "Collision: " << getCollisionTime() << "\n" <<
+                    "Obstacle Collision: " << getObstacleCollisionTime() << "\n" <<
+                    "To Grid: " << getToGridTime() << "\n" <<
+                    "Density Update: " << getDensityUpdateTime() << "\n" <<
+                    "Projection: " << getProjectionTime() << "\n" <<
+                    "To Particles: " << getToParticlesTime() << "\n" <<
+                    "Rendering: " << getRenderingTime() << "\n";/* <<
+                    "Whole Step: " << fluid_handler.getSimStepTime() << "\n" <<
+                    "Combined: " << fluid_handler.getCombinedTime() << "\n" <<
+                    "Before Sim Step: " << beforeSimStep << "\n" <<
+                    "After Sim Step: " << afterSimStep << "\n";*/
+                    window.close();
+                }
+                else if (event.key.code == sf::Keyboard::Y) {
+                    fluid_attributes.setStop(!fluid_attributes.getStop());
+                }
+                else if (event.key.code == sf::Keyboard::U) {
+                    fluid_attributes.setStep(true);
+                }
+            }
+            else if (event.type == sf::Event::MouseButtonPressed) {
+                if (event.mouseButton.button == sf::Mouse::Left) {
+                    fluid_attributes.frame_context.leftMouseDown = true;
+                    fluid_attributes.frame_context.justPressed = true;
+                }
+                else if (event.mouseButton.button == sf::Mouse::Right) {
+                    fluid_attributes.frame_context.rightMouseDown = true;
+                }
+            }
+            else if (event.type == sf::Event::MouseButtonReleased) {
+                if (event.mouseButton.button == sf::Mouse::Left) {
+                    fluid_attributes.frame_context.leftMouseDown = false;
+                }
+                else if (event.mouseButton.button == sf::Mouse::Right) {
+                    fluid_attributes.frame_context.rightMouseDown = false;
+                }
+            }
+            else if (event.type == sf::Event::MouseWheelScrolled) {
+
+                float mouseWheelDelta = event.mouseWheelScroll.delta;
+
+                if (fluid_handler.getDragObjectActive()) {
+                    fluid_handler.addToDragObjectRadius(20 * mouseWheelDelta);
+                }
+
+                else if (fluid_handler.getForceObjectActive()) {
+                    fluid_handler.addToForceObjectRadius(20 * mouseWheelDelta);
+                }
+
+                else if (fluid_handler.getGeneratorActive()) {
+                    fluid_handler.addToGeneratorRadius(20 * mouseWheelDelta);
+                }
+
+                else if (obstacle_handler.getPencilActive()) {
+                    int pencilRadius = obstacle_handler.getPencilRadius();
+                    if (!(pencilRadius > fluid_attributes.getNumX() / 2 && mouseWheelDelta > 0)) {
+                        obstacle_handler.addToPencilRadius(mouseWheelDelta);
+                        if (obstacle_handler.getPencilRadius() < 0) {
+                            obstacle_handler.addToPencilRadius(-obstacle_handler.getPencilRadius());
+                        }
+                    }
+                }
+
+                else if (scene_renderer.getZoomObjectActive()) {
+                    scene_renderer.wheelZoom(mouseWheelDelta);
+                }
+            }
+            /*end = std::chrono::high_resolution_clock::now();
+            duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+            addValueToAverage(afterSimStep, duration.count(), numDT);*/
+       }
+    }
+
+    void display() {
+        if (!fluid_attributes.getStop()) {
+            frame++;
+            if (frame == 20) {
+                fps = 1 / trueDT;
+                frame = 0;
+            }
+        }
+        else {
+            text.setFillColor(sf::Color::Red);
+        }
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 70, 10);
+        text.setString(std::to_string(fps)); 
+        window.draw(text);
+
+
+        if (fluid_attributes.getStop()) {
+            text.setFillColor(sf::Color::White);
+        }
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 175, 10);
+        text.setString(flipRatio_OSS.str());
+        window.draw(text);
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 275, 10);
+        text.setString(gravityY_OSS.str());
+        window.draw(text);
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 375, 10);
+        text.setString(gravityX_OSS.str());
+        window.draw(text);
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 475, 10);
+        text.setString(k_OSS.str());
+        window.draw(text);
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 575, 10);
+        text.setString(pressuerIters_OSS.str());
+        window.draw(text);
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 675, 10);
+        text.setString(vorticity_OSS.str());
+        window.draw(text);
+
+        if (fluid_handler.getGeneratorActive() && (fluid_attributes.frame_context.leftMouseDown || fluid_attributes.frame_context.rightMouseDown)) {
+            numParticles_OSS.str("");  
+            numParticles_OSS.clear();
+            numParticles_OSS << std::fixed << std::setprecision(1) << fluid_attributes.getNumParticles();
+        }
+
+        text.setPosition(fluid_attributes.frame_context.WIDTH - 775, 10);
+        text.setString(numParticles_OSS.str());
+        window.draw(text);
+
+
+        window.display();
+        
+        fluid_attributes.frame_context.zooming = false;
+        fluid_attributes.frame_context.justPressed = false;
+    }
+
+    void handle_zoom() {
+        if (fluid_attributes.frame_context.zooming) {
+            float zoom = fluid_attributes.frame_context.zoom_amount;
+            float zoomed_particle_rad = fluid_attributes.radius / zoom;
+            fluid_handler.dragObjectSimRadius = fluid_handler.dragObjectRenderRadius / zoom;
+            fluid_handler.forceObjectSimRadius = fluid_handler.forceObjectRenderRadius / zoom;
+            fluid_handler.checkForceObjectseparationDist = (zoomed_particle_rad + fluid_handler.forceObjectSimRadius) * (zoomed_particle_rad + fluid_handler.forceObjectSimRadius);
+            fluid_handler.generatorObjectSimRadius = fluid_handler.generatorObjectRenderRadius / zoom;
+        }
+    }
+
     void render_objects() {
         fluid_handler.render_objects(window);
         obstacle_handler.render_objects();
-    }
-
-    void zoom_objects() {
-
     }
 
     float getCombinedTime() {

@@ -10,23 +10,20 @@ struct SceneRenderer {
     sf::RenderWindow &window;
 
     bool zoomObjectActive = false;
-    float zoom_amount = 1.f;
-    sf::Vector2f prev_world_mouse_pos;
-    sf::Vector2f offset;
-    sf::Vector2f center;
-    sf::Transform transform;
 
     SceneRenderer(FluidState &fas, sf::RenderWindow& w): fluid_attributes(fas), fluid_renderer(fas, w), obstacle_renderer(fas, w), window(w) {
         float centerX = fluid_attributes.frame_context.WIDTH / 2.f;
         float centerY = fluid_attributes.frame_context.HEIGHT / 2.f;
-        offset = sf::Vector2f{centerX, centerY};
-        center = sf::Vector2f{centerX, centerY};
+        fluid_attributes.frame_context.offset = sf::Vector2f{centerX, centerY};
+        fluid_attributes.frame_context.center = sf::Vector2f{centerX, centerY};
+
+        fluid_attributes.frame_context.zoom_amount = 1.f;
     }
 
     // pass in sf::Vector
     template <typename T>
     T screenToWorld(T screen_pos) const {
-        return offset + (screen_pos - center) / zoom_amount;
+        return fluid_attributes.frame_context.offset + (screen_pos - fluid_attributes.frame_context.center) / fluid_attributes.frame_context.zoom_amount;
     }
 
     void render_scene() {
@@ -37,32 +34,33 @@ struct SceneRenderer {
     void zoomInto(sf::Vector2f zoom_position, float f) {
         fluid_attributes.frame_context.world_mouse_pos = screenToWorld(zoom_position);
 
-        zoom_amount *= f;
+        fluid_attributes.frame_context.zoom_amount *= f;
 
-        offset = fluid_attributes.frame_context.world_mouse_pos - (zoom_position - center) / zoom_amount;
+        fluid_attributes.frame_context.offset = fluid_attributes.frame_context.world_mouse_pos - (zoom_position - fluid_attributes.frame_context.center) / fluid_attributes.frame_context.zoom_amount;
 
         zoom_scene();
     }
 
      void zoom_scene() {
-        const float z = zoom_amount;
-        transform = sf::Transform::Identity;
-        transform.translate(center);
-        transform.scale(z, z);
-        transform.translate(-offset);
+        fluid_attributes.frame_context.zooming = true;
+        const float z = fluid_attributes.frame_context.zoom_amount;
+        fluid_attributes.frame_context.transform = sf::Transform::Identity;
+        fluid_attributes.frame_context.transform.translate(fluid_attributes.frame_context.center);
+        fluid_attributes.frame_context.transform.scale(z, z);
+        fluid_attributes.frame_context.transform.translate(-fluid_attributes.frame_context.offset);
 
-        fluid_renderer.fluidStates.transform = transform;
-        fluid_renderer.cellStates.transform = transform;
+        fluid_renderer.fluidStates.transform = fluid_attributes.frame_context.transform;
+        fluid_renderer.cellStates.transform = fluid_attributes.frame_context.transform;
         
-        obstacle_renderer.obstacleStates.transform = transform;
+        obstacle_renderer.obstacleStates.transform = fluid_attributes.frame_context.transform;
 
         normalize_objects();
     }
 
     void reset_zoom() {
-        zoom_amount = 1.f;
-        offset = center;
-        fluid_attributes.frame_context.world_mouse_pos = center;
+        fluid_attributes.frame_context.zoom_amount = 1.f;
+        fluid_attributes.frame_context.offset = fluid_attributes.frame_context.center;
+        fluid_attributes.frame_context.world_mouse_pos = fluid_attributes.frame_context.center;
         zoom_scene();
     }
     
@@ -77,10 +75,10 @@ struct SceneRenderer {
     }
 
     void normalize_objects() {
-        obstacle_renderer.pencil.setSize(sf::Vector2f{fluid_attributes.cellSpacing * zoom_amount, fluid_attributes.cellSpacing * zoom_amount});
-        obstacle_renderer.pencil.setOrigin(fluid_attributes.halfSpacing * zoom_amount, fluid_attributes.halfSpacing * zoom_amount);
-        obstacle_renderer.pencilSeparationX = std::max(fluid_attributes.cellSpacing * zoom_amount, 0.1f);
-        obstacle_renderer.pencilSeparationY = std::max(fluid_attributes.cellSpacing * zoom_amount, 0.1f);
+        obstacle_renderer.pencil.setSize(sf::Vector2f{fluid_attributes.cellSpacing * fluid_attributes.frame_context.zoom_amount, fluid_attributes.cellSpacing * fluid_attributes.frame_context.zoom_amount});
+        obstacle_renderer.pencil.setOrigin(fluid_attributes.halfSpacing * fluid_attributes.frame_context.zoom_amount, fluid_attributes.halfSpacing * fluid_attributes.frame_context.zoom_amount);
+        obstacle_renderer.pencilSeparationX = std::max(fluid_attributes.cellSpacing * fluid_attributes.frame_context.zoom_amount, 0.1f);
+        obstacle_renderer.pencilSeparationY = std::max(fluid_attributes.cellSpacing * fluid_attributes.frame_context.zoom_amount, 0.1f);
     }
 
     bool getZoomObjectActive() {

@@ -56,6 +56,8 @@ struct FluidRenderer {
         // temperature:
             // fire: {0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}
 
+    std::vector<bool> debug_condition;
+
     FluidRenderer(FluidState &fas, sf::RenderWindow &w): fluid_attributes(fas), window(w) {
         int numParticles = fluid_attributes.num_particles;
         n = fluid_attributes.numY;
@@ -130,6 +132,8 @@ struct FluidRenderer {
                 index++;
             }
         }
+
+        debug_condition.resize(fluid_attributes.num_particles);
     }
 
     void updateVertexArrayVelocity(uint32_t startIndex, uint32_t endIndex) {
@@ -260,7 +264,7 @@ struct FluidRenderer {
         }
     }
 
-    void updateVertexArrayCustom(int startIndex, int endIndex) {
+    void updateVertexArrayDebug(int startIndex, int endIndex) {
         for (uint32_t index = startIndex; index < endIndex; ++index) {
             int i = 4 * index;
             const float px = fluid_attributes.positions[2 * index];
@@ -271,10 +275,10 @@ struct FluidRenderer {
             va[i + 2].position = {px + radius, py + radius};
             va[i + 3].position = {px - radius, py + radius};
 
-            sf::Color color = sf::Color::Green;
+            sf::Color color = sf::Color::Red;
 
-            if (index < fluid_attributes.num_particles / 2) {
-                color = sf::Color::Red;
+            if (debug_condition[index]) {
+                color = sf::Color::Green;
             }
 
 
@@ -285,9 +289,9 @@ struct FluidRenderer {
         }
     }
 
-    void UpdateVaCustomMulti() {
+    void updateVaDebugMulti() {
         fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
-            this->updateVertexArrayCustom(start, end);
+            this->updateVertexArrayDebug(start, end);
         });
     }
 
@@ -394,6 +398,8 @@ struct FluidRenderer {
             UpdateVaVorticityMulti();
         } else if (renderPattern == 3) {
             UpdateVaTemperatureMulti();
+        } else if (renderPattern == 5) {
+            updateVaDebugMulti();
         }
 
         if (renderPattern == 4) {
@@ -403,6 +409,8 @@ struct FluidRenderer {
         } else {
             DrawParticles();
         }
+
+        std::fill(begin(debug_condition), end(debug_condition), false);
     }
 
     void drawActiveUVNodes(sf::RenderWindow& window) {
@@ -450,7 +458,7 @@ struct FluidRenderer {
 
     void setNextRenderPattern() {
         this->renderPattern++;
-        if (this->renderPattern > 4) { // 5 if you have an idea for custom rendering
+        if (this->renderPattern > 5) {
             this->renderPattern = 0;
         }
     }
