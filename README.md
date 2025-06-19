@@ -23,10 +23,9 @@ The simulation is able to run around 200k particles at 60 fps
 
 Improvements to be made:
 -  implement Multigrid, and then MGPCG
-    - Efficient Red Black SOR/GS has been implemented as well as Preconditioned Conjugate Gradient, now need to implement efficient Dampened Jacobi
--  better collision resolution with scene objects
-    - use continuous collision detection
--  Implement Implicit Density Projection
--  Currently using no-slip boundary conditions. Implement slip boundary conditions without artifacts
--  Make everything more efficient
-    - Make sure that data structures & algs are as efficient and simple as possible
+    - Efficient Red Black SOR/GS has been implemented as well as general Preconditioned Conjugate Gradient code, now need to implement efficient Dampened Jacobi
+-  DDA ray casting & making sure that particle-particle collisions don't push particles into obstacles
+-  Actual fluid rendering, in addition to the current particle view
+-  Implicit Density Projection
+-  Currently using no-slip boundary conditions. Implement slip boundary conditions from that Fedkiw paper
+-  Use thread buffers more (to grid most importantly)
