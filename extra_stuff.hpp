@@ -1,3 +1,199 @@
+    // MICCG(0) code, as described in Bridson's book
+    // --------------------------------------------------------------------------------------------------------------------------
+    void setUpA() {
+        float scale = 1;//dt / (density * cellSpacing * cellSpacing);
+
+        std::fill(Adiag.begin(), Adiag.end(), 0.0);
+
+        std::fill(si.begin(), si.end(), 0.0);
+        std::fill(li.begin(), li.end(), 0.0);
+
+        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
+            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
+                int idx = i * n + j;
+
+                if (fluid_attributes.cellType[idx] != fluid_attributes.FLUID_CELL) continue;
+
+                int left = fluid_attributes.cellType[idx - n];
+                int right = fluid_attributes.cellType[idx + n];
+                int bottom = fluid_attributes.cellType[idx + 1];
+                int top = fluid_attributes.cellType[idx - 1];
+
+                if (left == FLUID_CELL || left == AIR_CELL) { 
+                    Adiag[idx] += scale;
+                }
+
+                if (right == FLUID_CELL) {
+                    Adiag[idx] += scale;
+                    li[idx] = -scale;
+                }
+                else if (right == AIR_CELL) {
+                    Adiag[idx] += scale;
+                }
+
+                if (top == FLUID_CELL || top == AIR_CELL) { 
+                    Adiag[idx] += scale;
+                }
+
+                if (bottom == FLUID_CELL) {
+                    Adiag[idx] += scale;
+                    si[idx] = -scale;
+                }
+                else if (bottom == AIR_CELL) {
+                    Adiag[idx] += scale;
+                }
+            }
+        }
+    }
+
+    void buildPreconditioner() {
+        const double tau = 0.97;
+        const double sigma = 0.25;
+
+        for (int i = 1; i < fluid_attributes.numX - 1; ++i) { // I call this the level iteration. Every time i increases, we are at the next level iteration
+            for (int j = 1; j < fluid_attributes.numY - 1; ++j) { // and this is the swipe iteration. Every time j increases, we are at the next swipe iteration
+                int idx = i * n + j;
+
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+
+                double e = Adiag[idx];
+
+                // si is short for swipe iteration, just some slang for you new gens
+                    // si[index] = 0 if the cell in the next swipe iteration touching the current is not fluid, else si[index] = -1
+
+                // li is short for level iteration
+                    // li[index] = 0 if the cell in the next level iteration touching the current cell is not fluid, else li[index] = -1
+
+                // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration (exactly one row below/above, one column left/right)
+
+                // same for level iteration, denoted with L
+
+                // if cell - S is fluid, then do: (si - S) * (precon - S), and (li - S) * (precon - S)
+                if (fluid_attributes.cellType[idx - 1] == FLUID_CELL) {
+                    double px = si[idx - 1] * precon[idx - 1];
+                    double py = li[idx - 1] * precon[idx - 1];
+                    e -= (px * px + tau * px * py);
+                }
+
+                // if cell - L is fluid, then do: (si - L) * (precon - L), and (li - L) * (precon - L)
+                if (fluid_attributes.cellType[idx - n] == FLUID_CELL) {
+                    double px = si[idx - n] * precon[idx - n];
+                    double py = li[idx - n] * precon[idx - n];
+                    e -= (py * py + tau * px * py);
+                }
+
+                if (e < sigma * Adiag[idx]) {
+                    e = Adiag[idx];
+                }
+
+                // don't encase a small amount of fluid cells within solids, it messes with the preconditioner. But modifying it only if e is big enough patches up the problem
+                if (e * e > 1e-18) {
+                    precon[idx] = 1.0 / std::sqrt(e);
+                }
+            }
+        }
+    }
+
+    void applyPreconditioner(std::vector<double> &dst, std::vector<double> &a) {
+        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
+            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
+                int32_t idx = i * n + j;
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+
+                double t = a[idx];
+
+                // if cell - S is fluid, then do: (si - S) * (precon - S) * (dst - S)
+                if (fluid_attributes.cellType[idx - 1] == FLUID_CELL) {
+                    t -= si[idx - 1] * precon[idx - 1] * dst[idx - 1];
+                }
+
+                // if cell - L is fluid, then do: (si - L) * (precon - L) * (dst - L)
+                if (fluid_attributes.cellType[idx - n] == FLUID_CELL) {
+                    t -= li[idx - n] * precon[idx - n] * dst[idx - n];
+                }
+
+                dst[idx] = t * precon[idx];
+            }
+        }
+
+        for (int i = fluid_attributes.numX - 2; i > 0; --i) {
+            for (int j = fluid_attributes.numY - 2; j > 0; --j) {
+                int32_t idx = i * n + j;
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+
+                double t = dst[idx];
+
+                // if cell + S is fluid, then do: (si) * (precon) * (dst + S)
+                if (fluid_attributes.cellType[idx + 1] == FLUID_CELL) {
+                    t -= si[idx] * precon[idx] * dst[idx + 1];
+                }
+
+                // if cell + L is fluid, then do: (li) * (precon) * (dst + L)
+                if (fluid_attributes.cellType[idx + n] == FLUID_CELL) {
+                    t -= li[idx] * precon[idx] * dst[idx + n];
+                }
+
+                dst[idx] = t * precon[idx];
+            }
+        }
+    }
+
+    void matVec(std::vector<double> &dst, std::vector<double> &b) {
+        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
+            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
+                int32_t idx = i * n + j;
+                
+                double t = Adiag[idx] * b[idx];
+
+                // (si - S) * (b - S)
+                t += si[idx - 1] * b[idx - 1];
+
+                // (li - L) * (b - L)
+                t += li[idx - n] * b[idx - n];
+
+                // (si) * (b + S)
+                t += si[idx] * b[idx + 1];
+
+                // (li) * (b + L)
+                t += li[idx] * b[idx + n];
+
+                dst[idx] = t;
+            }
+        }
+    }
+
+    void projectMICCG(int numIters) {
+        std::fill(begin(pressure), end(pressure), 0.f);
+
+        setUpResidual();
+        setUpA();
+        buildPreconditioner();
+        applyPreconditioner(z, residual);
+        std::copy(begin(z), end(z), begin(direction));
+
+        double sigma = DotMulti(z, residual);
+
+        for (int iter = 0; iter < numIters && sigma > 0; ++iter) {
+            matVec(z, direction);
+
+            double alpha = sigma / DotMulti(z, direction);
+
+            ScaledAdd(pressure, direction, alpha);
+            ScaledAdd(residual, z, -alpha);
+
+            applyPreconditioner(z, residual);
+
+            double sigmaNew = DotMulti(z, residual);
+            
+            EqualsPlusTimesMulti(direction, z, sigmaNew / sigma);
+
+            sigma = sigmaNew;
+        }
+
+        applyPressureMulti();
+    }
+    // --------------------------------------------------------------------------------------------------------------------------
+
     // constant memory collision detection/resolution code
     void initializeSHConstantMem() {
 
