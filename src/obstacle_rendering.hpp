@@ -40,16 +40,11 @@ struct ObstacleRenderer {
     }
 
     void drawPencil(int pencilRadius) {
-        /*int localX = static_cast<int>(fluid_attributes.frame_context.screen_mouse_pos.x / fluid_attributes.cellSpacing);
-        int localY = static_cast<int>(fluid_attributes.frame_context.screen_mouse_pos.y / fluid_attributes.cellSpacing);
-        int idx = localX * fluid_attributes.n + localY;
+        sf::Vector2i localPos = sf::Vector2i{fluid_attributes.frame_context.simulation_mouse_pos / fluid_attributes.cellSpacing};
 
-        float drawPosX = localX * fluid_attributes.cellSpacing + fluid_attributes.halfSpacing;
-        float drawPosY = localY * fluid_attributes.cellSpacing + fluid_attributes.halfSpacing;*/
+        sf::Vector2f simPos = sf::Vector2f(localPos) * fluid_attributes.cellSpacing + sf::Vector2f{fluid_attributes.halfSpacing, fluid_attributes.halfSpacing};
 
-        sf::Vector2f localPos = fluid_attributes.frame_context.simulation_mouse_pos;
-
-        sf::Vector2f drawPos = localPos * fluid_attributes.cellSpacing + sf::Vector2f{fluid_attributes.halfSpacing, fluid_attributes.halfSpacing};
+        sf::Vector2f screenPos = (simPos - fluid_attributes.frame_context.offset) * fluid_attributes.frame_context.zoom_amount + fluid_attributes.frame_context.center;
 
         if (fluid_attributes.frame_context.leftMouseDown || !fluid_attributes.frame_context.rightMouseDown) {
             pencil.setFillColor(sf::Color(0, 150, 0));
@@ -60,10 +55,8 @@ struct ObstacleRenderer {
 
         for (int i = -pencilRadius; i <= pencilRadius; ++i) {
             for (int j = -pencilRadius; j <= pencilRadius; ++j) {
-                if (localPos.x + i > 0 && localPos.y + j > 0 && localPos.x + i < fluid_attributes.numX - 1 && localPos.y + j < fluid_attributes.numY - 1) {
-                    pencil.setPosition(drawPos.x + i * pencilSeparationX, drawPos.y + j * pencilSeparationY);
-                    window.draw(pencil);
-                }
+                pencil.setPosition(screenPos.x + i * pencilSeparationX, screenPos.y + j * pencilSeparationY);
+                window.draw(pencil);
             }
         }
     }
