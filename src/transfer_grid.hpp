@@ -352,7 +352,7 @@ private:
     }
 
     void transferParticleVelocitiesToGridMulti() {
-
+        // multithread splat to local thread buffer u/v and du/dv, then accumulate changes
         const int32_t numThreads = fluid_attributes.numThreads;
         const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / numThreads;
         const int32_t numMissedColumns = fluid_attributes.numX - 2 - numColumnsPerThread * numThreads;
