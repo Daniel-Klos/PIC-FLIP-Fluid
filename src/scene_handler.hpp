@@ -50,6 +50,7 @@ struct SceneHandler {
           obstacle_handler(fas, scene_renderer.obstacle_renderer), 
           fluid_handler(fas, scene_renderer.fluid_renderer)
     {
+
         // initialize obstacle positions
         // ----------------------------------------------------------------------------------------------------------------------------
 
@@ -322,7 +323,12 @@ struct SceneHandler {
 
         //start = std::chrono::high_resolution_clock::now();
         
-        fluid_handler.pressure_solver.projectRedBlackGSMulti(fluid_attributes.numThreads);
+        fluid_handler.pressure_solver.projectRedBlackSORMulti(fluid_handler.pressure_solver.numPressureIters);
+
+        // PCG with RBSOR as a preconditioner makes super cool high frequency patterns
+        /*fluid_handler.pressure_solver.projectPCG([&]() {
+            fluid_handler.pressure_solver.projectRedBlackSORMulti(3); // around 2-6 iterations for preconditioner
+        });*/
         //fluid_handler.pressure_solver.projectCG();
 
         end = std::chrono::high_resolution_clock::now();
@@ -610,9 +616,8 @@ struct SceneHandler {
         text.setString(numParticles_OSS.str());
         window.draw(text);
 
-
         window.display();
-        
+
         fluid_attributes.frame_context.zooming = false;
         fluid_attributes.frame_context.justPressed = false;
     }

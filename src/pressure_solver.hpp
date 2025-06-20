@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "simulation_state.hpp"
 
 struct PressureSolver {
@@ -15,11 +16,8 @@ struct PressureSolver {
 
     std::vector<double> residual;
     std::vector<double> Adiag;
-    std::vector<double> si;
-    std::vector<double> li;
     std::vector<double> precon;
     std::vector<double> direction;
-    std::vector<double> z;
     std::vector<double> dotProducts;
     std::vector<double> pressure;
 
@@ -42,18 +40,112 @@ struct PressureSolver {
         gridSize = fluid_attributes.numX * fluid_attributes.numY;
         this->Adiag.resize(gridSize);
         this->neighbors.resize(gridSize);
-        this->si.resize(gridSize);
-        this->li.resize(gridSize);
         this->precon.resize(gridSize);
-        this->z.resize(gridSize);
         this->direction.resize(gridSize);
         this->residual.resize(gridSize);
         this->pressure.resize(gridSize);
     }
 
-    void setUpResidual() {
+
+    // What I'm using currently
+    // --------------------------------------------------------------------------------------------------------------------------------------------
+
+    void passRedBlackSOR(int start, int stop, bool red) {
+        for (int i = start; i < stop; ++i) {
+            for (int j = (i + red) % 2; j < fluid_attributes.numY - 1; j += 2) {
+                int idx = i * n + j;
+                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
+
+                float leftType = fluid_attributes.cellType[idx - n] <= AIR_CELL ? 1 : 0;
+                float rightType = fluid_attributes.cellType[idx + n] <= AIR_CELL ? 1 : 0;
+                float topType = fluid_attributes.cellType[idx - 1] <= AIR_CELL ? 1 : 0;
+                float bottomType = fluid_attributes.cellType[idx + 1] <= AIR_CELL ? 1 : 0;
+
+                float divideBy = leftType + rightType + topType + bottomType;
+            
+                if (divideBy == 0.f) continue;
+
+                float divergence = fluid_attributes.u[idx + n] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx];
+                if (fluid_attributes.particleRestDensity > 0.f) {
+                    float compression = fluid_attributes.cellDensities[idx] - fluid_attributes.particleRestDensity;
+                    if (compression > 0.f) {
+                        divergence -= k * compression;
+                    }
+                }
+
+                float p = divergence / divideBy;
+                p *= overRelaxation;
+
+                fluid_attributes.u[idx] += leftType * p;
+                fluid_attributes.u[idx + n] -= rightType * p;
+                fluid_attributes.v[idx] += topType * p;
+                fluid_attributes.v[idx + 1] -= bottomType * p;
+            }
+        }
+    }
+
+    void projectRedBlackSORMulti(int numIters) {
+        int columnsPerThread = (fluid_attributes.numX - 1) / fluid_attributes.numThreads;
+        int numMissedColumns = fluid_attributes.numX - 1 - fluid_attributes.numThreads * columnsPerThread;
+
+        for (int iter = 0; iter < numIters; ++iter) {
+            for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
+                    int start = i * columnsPerThread + 1;
+                    int end = i * columnsPerThread + columnsPerThread + 1;
+                
+                    passRedBlackSOR(start, end, 0);
+                });
+            }
+        
+            passRedBlackSOR(fluid_attributes.numX - numMissedColumns, fluid_attributes.numX - 1, 0);
+        
+            fluid_attributes.thread_pool.waitForCompletion();
+
+            for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
+                    int start = i * columnsPerThread + 1;
+                    int end = i * columnsPerThread + columnsPerThread + 1;
+                
+                    passRedBlackSOR(start, end, 1);
+                });
+            }
+        
+            passRedBlackSOR(fluid_attributes.numX - numMissedColumns, fluid_attributes.numX - 1, 1);
+        
+            fluid_attributes.thread_pool.waitForCompletion();
+        }
+    }
+    // --------------------------------------------------------------------------------------------------------------------------------------------
+
+
+    // Soon to be Multigrid code
+    // --------------------------------------------------------------------------------------------------------------------------------------------
+    void restrict() {
+        
+    }
+
+    void prolongate() {
+
+    }
+
+    void projectVCycle() {
+
+    }
+    // --------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+    // conjugate gradient code
+    // --------------------------------------------------------------------------------------------------------------------------------------------
+
+    /*void setUpResidualMulti() {
         std::fill(begin(residual), end(residual), 0.0);
 
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.numColumns, [this])
+    }*/
+
+    void setUpResidual() {
         for (int32_t i = 1; i < fluid_attributes.numX - 1; ++i) {
             for (int32_t j = 1; j < fluid_attributes.numY - 1; ++j) {
                 int32_t idx = i * n + j;
@@ -74,24 +166,32 @@ struct PressureSolver {
         }
     }
 
-    void ScaledAdd(std::vector<double>& a, std::vector<double>& b, double c) {
-        for (int i = 0; i < gridSize; ++i) {
+    void ScaledAddMulti(std::vector<double> &a, std::vector<double> &b, double c) {
+        const int32_t numCellsPerThread = fluid_attributes.gridSize / fluid_attributes.numThreads;
+        const int32_t numMissedColumns = fluid_attributes.gridSize - numCellsPerThread * fluid_attributes.numThreads;
+
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.gridSize, [this, &a, &b, c](int start, int end) {
+            ScaledAdd(a, b, c, start, end);
+        });
+    }
+
+    void ScaledAdd(std::vector<double> &a, std::vector<double> &b, double c, int start, int end) {
+        for (int i = start; i < end; ++i) {
             if (fluid_attributes.cellType[i] == FLUID_CELL) {
                 a[i] += b[i] * c;
             }
         }
     }
 
-    double DotMulti(std::vector<double> *a, std::vector<double> *b) {
-        const int32_t numThreads_ = 1;
-        const int32_t numColumnsPerThread = (gridSize) / numThreads_;
-        const int32_t numMissedColumns = gridSize - numColumnsPerThread * numThreads_;
+    double DotMulti(std::vector<double> &a, std::vector<double> &b) {
+        const int32_t numCellsPerThread = fluid_attributes.gridSize / fluid_attributes.numThreads;
+        const int32_t numMissedColumns = fluid_attributes.gridSize - numCellsPerThread * fluid_attributes.numThreads;
 
         std::fill(begin(dotProducts), end(dotProducts), 0.0);
 
-        for (int i = 0; i < numThreads_; ++i) {
-            int start = i * numColumnsPerThread;
-            int end = (i == numThreads_ - 1) ? (gridSize) : (start + numColumnsPerThread);
+        for (int i = 0; i < fluid_attributes.numThreads; ++i) {
+            int start = i * numCellsPerThread;
+            int end = (i == fluid_attributes.numThreads - 1) ? (gridSize) : (start + numCellsPerThread);
             fluid_attributes.thread_pool.addTask([&, i, start, end]() {
                 this->Dot(a, b, start, end, dotProducts[i]);
             });
@@ -107,243 +207,33 @@ struct PressureSolver {
         return res;
     }
 
-    void Dot(std::vector<double> *a, std::vector<double> *b, int start, int end, double& res) {
+    void Dot(std::vector<double> &a, std::vector<double> &b, int start, int end, double &res) {
         for (int i = start; i < end; ++i) {
             if (fluid_attributes.cellType[i] == FLUID_CELL) {
-                res += (*a)[i] * (*b)[i];
+                res += a[i] * b[i];
             }
         }
     }
 
-    void EqualsPlusTimesMulti(std::vector<double> *a, std::vector<double> *b, double c) {
-        const int32_t numThreads_ = 1;
-        const int32_t numColumnsPerThread = gridSize / numThreads_;
-        const int32_t numMissedColumns = gridSize - numColumnsPerThread * numThreads_;
-
-        for (int i = 0; i < numThreads_; ++i) {
-            fluid_attributes.thread_pool.addTask([&, i]() {
-                this->EqualsPlusTimes(a, b, c, i * numColumnsPerThread, i * numColumnsPerThread + numColumnsPerThread);
-            });
-        }
-
-        this->EqualsPlusTimes(a, b, c, gridSize - numMissedColumns, gridSize);
-
-        fluid_attributes.thread_pool.waitForCompletion();
-
-        /*const int32_t numColumnsPerThread = (numX * numY) / numThreads_;
-        fluid_attributes.thread_pool.dispatch(numColumns, [this](int start, int end) {
-            fluid_attributes.updateVertexArrayVorticity(start, end);
-        });*/
+    void EqualsPlusTimesMulti(std::vector<double> &a, std::vector<double> &b, double c) {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.gridSize, [this, &a, &b, c](int start, int end) {
+            EqualsPlusTimes(a, b, c, start, end);
+        });
     }
 
-    void EqualsPlusTimes(std::vector<double> *a, std::vector<double> *b, double c, int start, int end) {
+    void EqualsPlusTimes(std::vector<double> &a, std::vector<double> &b, double c, int start, int end) {
         for (int i = start; i < end; ++i) {
             if (fluid_attributes.cellType[i] == FLUID_CELL) {
-                (*a)[i] = (*b)[i] + (*a)[i] * c;
+                a[i] = b[i] + a[i] * c;
             }
         }
-    }
-
-    void setUpA() {
-        float scale = 1;//dt / (cellSpacing * cellSpacing); // also see what happens when you divide by 1000 (density of water) as well
-
-        std::fill(Adiag.begin(), Adiag.end(), 0.0);
-
-        // Ax[i] is the cell to the right, Ay[i] is the cell below
-        std::fill(si.begin(), si.end(), 0.0);
-        std::fill(li.begin(), li.end(), 0.0);
-
-        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
-            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                int idx = i * n + j;
-
-                if (fluid_attributes.cellType[idx] != fluid_attributes.FLUID_CELL) continue;
-
-                int left = fluid_attributes.cellType[idx - n];
-                int right = fluid_attributes.cellType[idx + n];
-                int bottom = fluid_attributes.cellType[idx + 1];
-                int top = fluid_attributes.cellType[idx - 1];
-
-                if (left == FLUID_CELL || left == AIR_CELL) { 
-                    Adiag[idx] += scale;
-                }
-
-                if (right == FLUID_CELL) {
-                    Adiag[idx] += scale;
-                    li[idx] = -scale;
-                }
-                else if (right == AIR_CELL) {
-                    Adiag[idx] += scale;
-                }
-
-                if (top == FLUID_CELL || top == AIR_CELL) { 
-                    Adiag[idx] += scale;
-                }
-
-                if (bottom == FLUID_CELL) {
-                    Adiag[idx] += scale;
-                    si[idx] = -scale;
-                }
-                else if (bottom == AIR_CELL) {
-                    Adiag[idx] += scale;
-                }
-            }
-        }
-    }
-
-    void buildPreconditioner() {
-        const double tau = 0.97;
-        const double sigma = 0.25;
-
-        for (int i = 1; i < fluid_attributes.numX - 1; ++i) { // I call this the level iteration. Every time j increases, we are at the next level iteration
-            for (int j = 1; j < fluid_attributes.numY - 1; ++j) { // and this is the swipe iteration. Every time i increases, we are at the next swipe iteration
-                int idx = i * n + j;
-
-                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
-
-                double e = Adiag[idx];
-
-                // si is short for swipe iteration, just some slang for you new gens
-                    // si[index] = 0 if the cell in the next swipe iteration touching the current is not fluid, else si[index] = -1
-
-                // li is short for level iteration
-                    // li[index] = 0 if the cell in the next level iteration touching the current cell is not fluid, else li[index] = -1
-
-                // if I add/subtract something by S in a comment, that means I'm taking the value of it at the next/previous swipe iteration (exactly one row below/above, one column left/right)
-
-                // same for level iteration, denoted with L
-
-                // if cell - S is fluid, then do: (si - S) * (precon - S), and (li - S) * (precon - S)
-                if (fluid_attributes.cellType[idx - 1] == FLUID_CELL) {
-                    double px = si[idx - 1] * precon[idx - 1];
-                    double py = li[idx - 1] * precon[idx - 1];
-                    e -= (px * px + tau * px * py);
-                }
-
-                // if cell - L is fluid, then do: (si - L) * (precon - L), and (li - L) * (precon - L)
-                if (fluid_attributes.cellType[idx - n] == FLUID_CELL) {
-                    double px = si[idx - n] * precon[idx - n];
-                    double py = li[idx - n] * precon[idx - n];
-                    e -= (py * py + tau * px * py);
-                }
-
-                if (e < sigma * Adiag[idx]) {
-                    e = Adiag[idx];
-                }
-
-                // don't encase a small amount of fluid cells within solids, it messes with the preconditioner. But modifying it only if e is big enough patches up the problem
-                if (e * e > 1e-18) {
-                    precon[idx] = 1.0 / std::sqrt(e);
-                }
-            }
-        }
-    }
-
-    void applyPreconditioner(std::vector<double> *dst, std::vector<double> *a) {
-        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
-            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                int32_t idx = i * n + j;
-                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
-
-                double t = (*a)[idx];
-
-                // if cell - S is fluid, then do: (si - S) * (precon - S) * (dst - S)
-                if (fluid_attributes.cellType[idx - 1] == FLUID_CELL) {
-                    t -= si[idx - 1] * precon[idx - 1] * (*dst)[idx - 1];
-                }
-
-                // if cell - L is fluid, then do: (si - L) * (precon - L) * (dst - L)
-                if (fluid_attributes.cellType[idx - n] == FLUID_CELL) {
-                    t -= li[idx - n] * precon[idx - n] * (*dst)[idx - n];
-                }
-
-                (*dst)[idx] = t * precon[idx];
-            }
-        }
-
-        for (int i = fluid_attributes.numX - 2; i > 0; --i) {
-            for (int j = fluid_attributes.numY - 2; j > 0; --j) {
-                int32_t idx = i * n + j;
-                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
-
-                double t = (*dst)[idx];
-
-                // if cell + S is fluid, then do: (si) * (precon) * (dst + S)
-                if (fluid_attributes.cellType[idx + 1] == FLUID_CELL) {
-                    t -= si[idx] * precon[idx] * (*dst)[idx + 1];
-                }
-
-                // if cell + L is fluid, then do: (li) * (precon) * (dst + L)
-                if (fluid_attributes.cellType[idx + n] == FLUID_CELL) {
-                    t -= li[idx] * precon[idx] * (*dst)[idx + n];
-                }
-
-                (*dst)[idx] = t * precon[idx];
-            }
-        }
-    }
-
-    void matVec(std::vector<double> *dst, std::vector<double> *b) {
-        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
-            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                int32_t idx = i * n + j;
-                
-                double t = Adiag[idx] * (*b)[idx];
-
-                // (si - S) * (b - S)
-                t += si[idx - 1] * (*b)[idx - 1];
-
-                // (li - L) * (b - L)
-                t += li[idx - n] * (*b)[idx - n];
-
-                // (si) * (b + S)
-                t += si[idx] * (*b)[idx + 1];
-
-                // (li) * (b + L)
-                t += li[idx] * (*b)[idx + n];
-
-                (*dst)[idx] = t;
-            }
-        }
-    }
-
-    void projectMICCG(int numIters) { // include function pointer to applyPreconditioner as parameter
-        std::fill(begin(pressure), end(pressure), 0.f);
-
-        setUpResidual();
-        setUpA();
-        buildPreconditioner();
-        applyPreconditioner(&z, &residual);
-        std::copy(begin(z), end(z), begin(direction));
-
-        double sigma = DotMulti(&z, &residual);
-
-        for (int iter = 0; iter < numIters && sigma > 0; ++iter) {
-            matVec(&z, &direction);
-
-            double alpha = sigma / DotMulti(&z, &direction);
-
-            ScaledAdd(pressure, direction, alpha);
-            ScaledAdd(residual, z, -alpha);
-
-            applyPreconditioner(&z, &residual);  // applying the preconditioner is the only thing making MICCG(0) so slow
-
-            double sigmaNew = DotMulti(&z, &residual);
-            
-            EqualsPlusTimesMulti(&direction, &z, sigmaNew / sigma);
-
-            sigma = sigmaNew;
-        }
-
-        applyPressureMulti();
     }
 
     void applyPressureMulti() {
-        const int32_t numThreads_ = 1;
-        const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / numThreads_;
-        const int32_t numMissedColumns = (fluid_attributes.numX - 2) - numColumnsPerThread * numThreads_;
+        const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / fluid_attributes.numThreads;
+        const int32_t numMissedColumns = (fluid_attributes.numX - 2) - numColumnsPerThread * fluid_attributes.numThreads;
 
-        for (int i = 0; i < numThreads_; ++i) {
+        for (int i = 0; i < fluid_attributes.numThreads; ++i) {
             fluid_attributes.thread_pool.addTask([&, i]() {
                 this->applyPressure(1 + i * numColumnsPerThread, 1 + i * numColumnsPerThread + numColumnsPerThread);
             });
@@ -386,154 +276,6 @@ struct PressureSolver {
         }
     }
 
-    void projectSOR(int numIters) {
-        for (int iter = 0; iter < numIters; ++iter) {
-            for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
-                for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                    int idx = i * n + j;
-                    if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
-
-                    float leftType = fluid_attributes.cellType[idx - n] <= AIR_CELL ? 1 : 0;
-                    float rightType = fluid_attributes.cellType[idx + n] <= AIR_CELL ? 1 : 0;
-                    float topType = fluid_attributes.cellType[idx - 1] <= AIR_CELL ? 1 : 0;
-                    float bottomType = fluid_attributes.cellType[idx + 1] <= AIR_CELL ? 1 : 0;
-
-                    float divideBy = leftType + rightType + topType + bottomType;
-                    if (divideBy == 0.f) continue;
-
-                    float divergence = fluid_attributes.u[idx + n] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx];
-
-                    if (fluid_attributes.particleRestDensity > 0.f) {
-                        float compression = fluid_attributes.cellDensities[idx] - fluid_attributes.particleRestDensity;
-                        if (compression > 0.f) {
-                            divergence -= k * compression;
-                        }
-                    }
-
-                    float p = divergence / divideBy;
-                    p *= overRelaxation;
-
-                    fluid_attributes.u[idx] += leftType * p;
-                    fluid_attributes.u[idx + n] -= rightType * p;
-                    fluid_attributes.v[idx] += topType * p;
-                    fluid_attributes.v[idx + 1] -= bottomType * p;
-                }
-            }
-        }
-    }
-
-    void preconditionSOR(int numIters) {
-
-    }
-
-    void passRedBlackGS(int start, int stop, bool red) {
-        for (int i = start; i < stop; ++i) {
-            for (int j = (i + red) % 2; j < fluid_attributes.numY - 1; j += 2) {
-                int idx = i * n + j;
-                if (fluid_attributes.cellType[idx] != FLUID_CELL) continue;
-
-                float leftType = fluid_attributes.cellType[idx - n] <= AIR_CELL ? 1 : 0;
-                float rightType = fluid_attributes.cellType[idx + n] <= AIR_CELL ? 1 : 0;
-                float topType = fluid_attributes.cellType[idx - 1] <= AIR_CELL ? 1 : 0;
-                float bottomType = fluid_attributes.cellType[idx + 1] <= AIR_CELL ? 1 : 0;
-
-                float divideBy = leftType + rightType + topType + bottomType;
-            
-                if (divideBy == 0.f) continue;
-
-                float divergence = fluid_attributes.u[idx + n] - fluid_attributes.u[idx] + fluid_attributes.v[idx + 1] - fluid_attributes.v[idx];
-                if (fluid_attributes.particleRestDensity > 0.f) {
-                    float compression = fluid_attributes.cellDensities[idx] - fluid_attributes.particleRestDensity;
-                    if (compression > 0.f) {
-                        divergence -= k * compression;
-                    }
-                }
-
-                float p = divergence / divideBy;
-                p *= overRelaxation;
-
-                fluid_attributes.u[idx] += leftType * p;
-                fluid_attributes.u[idx + n] -= rightType * p;
-                fluid_attributes.v[idx] += topType * p;
-                fluid_attributes.v[idx + 1] -= bottomType * p;
-            }
-        }
-    }
-
-    void projectRedBlackGS(int numIters) {
-        for (int i = 0; i < numIters; ++i) {
-            passRedBlackGS(0, fluid_attributes.numX - 1, 0);
-            passRedBlackGS(0, fluid_attributes.numX - 1, 1);
-        }
-    }
-
-    void projectRedBlackGSMulti(int numIters, int numThreads) {
-        /*int columnsPerThread = (fluid_attributes.numX - 1) / numThreads;
-        int numMissedColumns = fluid_attributes.numX - 1 - numThreads * columnsPerThread;
-
-        // not 100% thread safe but runs faster than thread safe version. Just have to deal with data race artifacts at the edges of columns if u use this (makes vorticity view look bad)
-        for (int iter = 0; iter < numIters; ++iter) {
-            for (int i = 0; i < numThreads; ++i) {
-                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
-                    int start = i * columnsPerThread + 1;
-                    int end = i * columnsPerThread + columnsPerThread + 1;
-                
-                    passRedBlackGS(start, end, 0);
-                    passRedBlackGS(start, end, 1);
-                });
-            }
-        
-            passRedBlackGS(fluid_attributes.numX - 1 - numMissedColumns, fluid_attributes.numX - 1, 0);
-            passRedBlackGS(fluid_attributes.numX - 1 - numMissedColumns, fluid_attributes.numX - 1, 1);
-        
-            fluid_attributes.thread_pool.waitForCompletion();
-        }*/
-
-        int columnsPerThread = (fluid_attributes.numX - 1) / numThreads;
-        int numMissedColumns = fluid_attributes.numX - 1 - numThreads * columnsPerThread;
-
-        for (int iter = 0; iter < numIters; ++iter) {
-            for (int i = 0; i < numThreads; ++i) {
-                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
-                    int start = i * columnsPerThread + 1;
-                    int end = i * columnsPerThread + columnsPerThread + 1;
-                
-                    passRedBlackGS(start, end, 0);
-                });
-            }
-        
-            passRedBlackGS(fluid_attributes.numX - numMissedColumns, fluid_attributes.numX - 1, 0);
-        
-            fluid_attributes.thread_pool.waitForCompletion();
-
-            for (int i = 0; i < numThreads; ++i) {
-                fluid_attributes.thread_pool.addTask([this, columnsPerThread, i] {
-                    int start = i * columnsPerThread + 1;
-                    int end = i * columnsPerThread + columnsPerThread + 1;
-                
-                    passRedBlackGS(start, end, 1);
-                });
-            }
-        
-            passRedBlackGS(fluid_attributes.numX - numMissedColumns, fluid_attributes.numX - 1, 1);
-        
-            fluid_attributes.thread_pool.waitForCompletion();
-        }
-    }
-
-    void restrict() {
-        
-    }
-
-    void prolongate() {
-
-    }
-
-    void projectVCycle() {
-
-    }
-
-    // conjugate gradient (not preconditioned) code
     uint8_t getMaterialFromDirection(uint8_t direction, int idx) {
         switch (direction) {
             case LEFT:
@@ -561,7 +303,7 @@ struct PressureSolver {
             return nbr_info;
         }
 
-        // else, add the direction onto the last 4 bits of nbr_info. Using or here because we don't wanna touch the first 3 bits
+        // else, add the direction onto the last 4 bits of nbr_info. Using OR here because we don't wanna touch the first 3 bits
         return nbr_info | dir;
     }
 
@@ -582,8 +324,14 @@ struct PressureSolver {
         }
     }
 
-    void ATimes() {
-        for (int i = 1; i < fluid_attributes.numX - 1; ++i) {
+    void MatVecMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.numX - 2, [this](int start, int end) {
+            MatVec(start, end);
+        });
+    }
+
+    void MatVec(int start, int end) {
+        for (int i = start + 1; i < end + 1; ++i) {
             for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
                 int idx = i * n + j;
 
@@ -605,7 +353,8 @@ struct PressureSolver {
         }
     }
 
-    void projectCG(int numIters) {
+    // conjugate gradient
+    void projectCG() {
 
         setUpNeighbors();
 
@@ -614,32 +363,59 @@ struct PressureSolver {
 
         setUpResidual();
 
-        // preconditionSOR(z, residual)
-
         std::copy(begin(residual), end(residual), begin(direction));
-        // std::copy(begin(z), end(z), begin(direction));
 
-        double sigma = DotMulti(&residual, &residual);
+        double sigma = DotMulti(residual, residual);
         
-        for (int iter = 0; iter < numIters && sigma > 0; ++iter) {
-            ATimes();
-            // ATimes(&z, &direction);
-            double alpha = sigma / DotMulti(&direction, &Adiag);
-            ScaledAdd(pressure, direction, alpha);
-            ScaledAdd(residual, Adiag, -alpha);
-            // ScaledAdd(residual, z, -alpha);
-
-            // preconditionSOR(&z, &residual)
-
+        for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
+            MatVecMulti();
+            
+            double alpha = sigma / DotMulti(direction, Adiag);
+            ScaledAddMulti(pressure, direction, alpha);
+            ScaledAddMulti(residual, Adiag, -alpha);
+            
             double sigmaOld = sigma;
-            sigma = DotMulti(&residual, &residual);
-            // sigmaNew = DotMulti(&z, &residual);
-            EqualsPlusTimesMulti(&direction, &residual, sigma / sigmaOld);
-            // EqualsPlusTimesMulti(&direction, &z, sigmaNew / sigma);
+            sigma = DotMulti(residual, residual);
+            EqualsPlusTimesMulti(direction, residual, sigma / sigmaOld);
         }
 
         applyPressureMulti();
     }
+
+    // general preconditioned conjugate gradient (using matrixless GS/Jacobi methods, so no z needed)
+    void projectPCG(std::function<void()> precondition) {
+
+        setUpNeighbors();
+
+        std::fill(begin(pressure), end(pressure), 0.0);
+        std::fill(begin(Adiag), end(Adiag), 0.0);
+
+        setUpResidual();
+
+        precondition();
+
+        std::copy(begin(residual), end(residual), begin(direction));
+
+        double sigma = DotMulti(residual, residual);
+        
+        for (int iter = 0; iter < numPressureIters && sigma > 0; ++iter) {
+            MatVecMulti();
+            
+            double alpha = sigma / DotMulti(direction, Adiag);
+            ScaledAddMulti(pressure, direction, alpha);
+            ScaledAddMulti(residual, Adiag, -alpha);
+
+            precondition();
+            
+            double sigmaOld = sigma;
+            sigma = DotMulti(residual, residual);
+            EqualsPlusTimesMulti(direction, residual, sigma / sigmaOld);
+        }
+
+        applyPressureMulti();
+    }
+    // --------------------------------------------------------------------------------------------------------------------------------------------
+
 
     void addToNumPressureIters(int32_t add) {
         numPressureIters += add;

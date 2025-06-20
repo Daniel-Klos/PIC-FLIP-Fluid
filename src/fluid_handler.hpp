@@ -193,7 +193,7 @@ public:
 
     void solveContact(uint32_t index, uint32_t otherIndex)
     {
-        constexpr float eps           = 0.0001f;
+        constexpr float eps = 0.0001f;
         const float o2_o1X = fluid_attributes.positions[2 * index] - fluid_attributes.positions[2 * otherIndex];
         const float o2_o1Y = fluid_attributes.positions[2 * index + 1] - fluid_attributes.positions[2 * otherIndex + 1];
 
@@ -217,12 +217,10 @@ public:
 
             collisions[index]++;
             collisions[otherIndex]++;
-
-
         }
     }
 
-    void checkAtomCellCollisions(uint32_t atom_idx, const CollisionCell& c)
+    void checkCellCollisions(uint32_t atom_idx, const CollisionCell& c)
     {
         for (uint32_t i = 0; i < c.objects_count; ++i) {
             solveContact(atom_idx, c.objects[i]);
@@ -232,15 +230,15 @@ public:
     void processCell(const CollisionCell& c, uint32_t index)
     {
         for (uint32_t i = 0; i < c.objects_count; ++i) {
-            const uint32_t atom_idx = c.objects[i];
+            const uint32_t idx = c.objects[i];
             for (int32_t side = 0; side < 2; ++side) {
-                checkAtomCellCollisions(atom_idx, collisionGrid.data[index + collisionGrid.height + side]);
+                checkCellCollisions(idx, collisionGrid.data[index + collisionGrid.height + side]);
             }
             for (int32_t side = 0; side < 2; ++side) {
-                checkAtomCellCollisions(atom_idx, collisionGrid.data[index + side]);   
+                checkCellCollisions(idx, collisionGrid.data[index + side]);   
             }
-            //checkAtomCellCollisions(atom_idx, grid.data[index - grid.height]);
-            checkAtomCellCollisions(atom_idx, collisionGrid.data[index - collisionGrid.height + 1]);
+            //checkCellCollisions(idx, grid.data[index - grid.height]);
+            checkCellCollisions(idx, collisionGrid.data[index - collisionGrid.height + 1]);
         }
     }
 
@@ -266,8 +264,6 @@ public:
 
                 for (uint32_t id{0}; id < cell.objects_count; ++id) {
                     const uint32_t particleIndex = cell.objects[id];
-
-                    fluid_renderer.debug_condition[particleIndex] = true;
 
                     float dx = fluid_attributes.positions[particleIndex * 2] - fluid_attributes.frame_context.simulation_mouse_pos.x;
                     float dy = fluid_attributes.positions[particleIndex * 2 + 1] - fluid_attributes.frame_context.simulation_mouse_pos.y;
@@ -399,7 +395,6 @@ public:
                     float dy = (j + 0.5) * fluid_attributes.cellSpacing - dragObjectY;
 
                     if (dx * dx + dy * dy < dragObjectSimRadius * dragObjectSimRadius + extend) {
-                        //fluid_attributes.cellType[i * n + j] = FLUID_CELL;
                         
                         if (fluid_attributes.cellType[cellNr - fluid_attributes.n] != fluid_attributes.SOLID_CELL) {
                             fluid_attributes.u[cellNr] = vx;

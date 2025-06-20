@@ -35,15 +35,16 @@ struct FluidRenderer {
     std::vector<int32_t> collisions;
 
     std::array<std::array<int, 3>, 100> velGradient;
-    std::array<std::array<int, 3>, 4> velColorMap {{{80, 0, 225}, {128, 0, 255}, {255, 0, 128}, {255, 255, 255}}};
+    std::array<std::array<int, 3>, 4> velColorMap {{{50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
 
     std::array<std::array<int, 3>, 100> vortGradient;
-    std::array<std::array<int, 3>, 4> vortColorMap {{{0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
+    std::array<std::array<int, 3>, 4> vortColorMap {{{50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
 
     std::array<std::array<int, 3>, 100> tempgradient;
     std::array<std::array<int, 3>, 4> tempMap{{{0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}}};
         // some nice gradients to put into these colorMaps:
         // velocity:
+            // sunset: {50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
             // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
             // night ocean: {0, 0, 100},{0, 180, 255}, {100, 255, 255}, {255, 255, 255}
             // ocean: {0, 60, 130}, {0, 180, 255}, {180, 255, 255}, {240, 240, 240}
@@ -52,9 +53,10 @@ struct FluidRenderer {
             // bright plasma neon: {80, 0, 225}, {128, 0, 255}, {255, 0, 128}, {255, 255, 255}
             // deep ocean: {0, 10, 60}, {0, 80, 180}, {0, 180, 220}, {200, 255, 255}
         // vorticity:
-            // sunset: {0, 0, 64}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
+            // sunset: {50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
         // temperature:
             // fire: {0, 0, 0}, {204, 51, 0}, {255, 102, 0}, {255, 255, 102}
+            // sunset: {50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}
 
     std::vector<bool> debug_condition;
 
@@ -398,9 +400,9 @@ struct FluidRenderer {
             UpdateVaVorticityMulti();
         } else if (renderPattern == 3) {
             UpdateVaTemperatureMulti();
-        } else if (renderPattern == 5) {
+        } /*else if (renderPattern == 5) {
             updateVaDebugMulti();
-        }
+        }*/
 
         if (renderPattern == 4) {
             UpdateDivergenceVaMulti();
@@ -410,7 +412,7 @@ struct FluidRenderer {
             DrawParticles();
         }
 
-        std::fill(begin(debug_condition), end(debug_condition), false);
+        //std::fill(begin(debug_condition), end(debug_condition), false);
     }
 
     void drawActiveUVNodes(sf::RenderWindow& window) {
@@ -458,7 +460,7 @@ struct FluidRenderer {
 
     void setNextRenderPattern() {
         this->renderPattern++;
-        if (this->renderPattern > 5) {
+        if (this->renderPattern > 4) { // 5 if wanna use debug mode
             this->renderPattern = 0;
         }
     }
