@@ -131,8 +131,8 @@ struct ObstacleHandler {
     }
 
     void drawSolids() {
-        int localX = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.x / fluid_attributes.cellSpacing);
-        int localY = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.y / fluid_attributes.cellSpacing);
+        int localX = static_cast<int>(fluid_attributes.frame_context.world_mouse_pos.x / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(fluid_attributes.frame_context.world_mouse_pos.y / fluid_attributes.cellSpacing);
 
         int numObstacles = fluid_attributes.obstaclePositions.size();
 
@@ -190,8 +190,8 @@ struct ObstacleHandler {
     }
 
     void eraseSolids() {
-        int localX = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.x / fluid_attributes.cellSpacing);
-        int localY = static_cast<int>(fluid_attributes.frame_context.simulation_mouse_pos.y / fluid_attributes.cellSpacing);
+        int localX = static_cast<int>(fluid_attributes.frame_context.world_mouse_pos.x / fluid_attributes.cellSpacing);
+        int localY = static_cast<int>(fluid_attributes.frame_context.world_mouse_pos.y / fluid_attributes.cellSpacing);
 
         int numObstacles = fluid_attributes.obstaclePositions.size();
         int numFreedCells = 0;

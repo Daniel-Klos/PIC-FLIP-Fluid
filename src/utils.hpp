@@ -23,3 +23,41 @@ int find(std::vector<T> *arr, T find) {
 void addValueToAverage(float& average, float newValue, int steps) {
     average = (average * (steps - 1) + newValue) / steps;
 }
+
+float Eps = 1e-6;
+
+bool ltEpsPlus(float a, float b) {
+    return a < b + Eps;
+}
+
+bool ltEpsMinus(float a, float b) {
+    return a < b - Eps;
+}
+
+bool gtEpsPlus(float a, float b) {
+    return a > b + Eps;
+}
+
+bool gtEpsMinus(float a, float b) {
+    return a > b - Eps;
+}
+
+bool lteEpsPlus(float a, float b) {
+    return a <= b + Eps;
+}
+
+bool lteEpsMinus(float a, float b) {
+    return a <= b - Eps;
+}
+
+bool gteEpsPlus(float a, float b) {
+    return a >= b + Eps;
+}
+
+bool gteEpsMinus(float a, float b) {
+    return a >= b - Eps;
+}
+
+struct Vector2vu {
+    std::array<float, 2> vu;
+};

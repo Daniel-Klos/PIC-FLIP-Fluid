@@ -35,7 +35,7 @@ struct FluidRenderer {
     std::vector<int32_t> collisions;
 
     std::array<std::array<int, 3>, 100> velGradient;
-    std::array<std::array<int, 3>, 4> velColorMap {{{50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
+    std::array<std::array<int, 3>, 4> velColorMap {{{50, 0, 255}, {225, 0, 225}, {255, 225, 100}, {255, 255, 125}}};
 
     std::array<std::array<int, 3>, 100> vortGradient;
     std::array<std::array<int, 3>, 4> vortColorMap {{{50, 0, 255}, {200, 0, 200}, {255, 200, 80}, {255, 255, 100}}};
@@ -48,6 +48,7 @@ struct FluidRenderer {
             // scientific: {0, 150, 255}, {0, 255, 0}, {255, 255, 0}, {255, 0, 0}
             // night ocean: {0, 0, 100},{0, 180, 255}, {100, 255, 255}, {255, 255, 255}
             // ocean: {0, 60, 130}, {0, 180, 255}, {180, 255, 255}, {240, 240, 240}
+            // bright ocean: {100, 150, 255}, {100, 255, 255}, {255, 255, 255}, {255, 255, 255}
             // plasma: {30, 0, 70}, {120, 0, 255}, {255, 150, 255}, {255, 255, 255}
             // plasma neon: {0, 0, 100}, {128, 0, 255}, {255, 0, 128}, {255, 255, 255}
             // bright plasma neon: {80, 0, 225}, {128, 0, 255}, {255, 0, 128}, {255, 255, 255}
@@ -63,7 +64,7 @@ struct FluidRenderer {
     FluidRenderer(FluidState &fas, sf::RenderWindow &w): fluid_attributes(fas), window(w) {
         int numParticles = fluid_attributes.num_particles;
         n = fluid_attributes.numY;
-        radius = fluid_attributes.radius;
+        radius = fluid_attributes.radius + 0.5f;
         invSpacing = 1.f / fluid_attributes.cellSpacing;
 
         this->collisions.resize(numParticles);
@@ -257,7 +258,9 @@ struct FluidRenderer {
 
             sf::Color color;
 
-            color = sf::Color(tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][0], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][1], tempgradient[std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp))][2], 255);
+            int tempidx = std::min(tempgradient.size() - 1, static_cast<unsigned long long>(temp));
+
+            color = sf::Color(tempgradient[tempidx][0], tempgradient[tempidx][1], tempgradient[tempidx][2], 255);
 
             va[i].color = color;
             va[i + 1].color = color;

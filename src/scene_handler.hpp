@@ -28,7 +28,7 @@ struct SceneHandler {
 
     int frame = 0;
     float trueDT;
-    float setDT = 1.f / 120.f;
+    float setDT;
     int fps;
 
     float steps = 0.f;
@@ -43,13 +43,15 @@ struct SceneHandler {
     float SimStepTime = 0.f;
     float miscellaneousTime = 0.f;
 
-    SceneHandler(FluidState &fas, sf::RenderWindow &w)
+    SceneHandler(FluidState &fas, sf::RenderWindow &w, int maxFps)
         : fluid_attributes(fas), 
           window(w),
           scene_renderer(fas, w), 
           obstacle_handler(fas, scene_renderer.obstacle_renderer), 
           fluid_handler(fas, scene_renderer.fluid_renderer)
     {
+        fluid_attributes.frame_context.maxFps = maxFps;
+        setDT = 1.f / maxFps;
 
         // initialize obstacle positions
         // ----------------------------------------------------------------------------------------------------------------------------
@@ -144,7 +146,7 @@ struct SceneHandler {
 
         numParticles_OSS << std::fixed << std::setprecision(0) << fluid_attributes.num_particles; 
 
-        window.setFramerateLimit(120);
+        window.setFramerateLimit(maxFps);
         // ----------------------------------------------------------------------------------------------------------------------------
     }
 
@@ -156,11 +158,8 @@ struct SceneHandler {
 
         sf::Vector2i mouse_position = sf::Mouse::getPosition(window);
 
-        fluid_attributes.frame_context.screen_mouse_pos = sf::Vector2f  {static_cast<float>(mouse_position.x), static_cast<float>(mouse_position.y)};
+        fluid_attributes.frame_context.screen_mouse_pos = sf::Vector2f{static_cast<float>(mouse_position.x), static_cast<float>(mouse_position.y)};
         fluid_attributes.frame_context.world_mouse_pos = scene_renderer.screenToWorld(fluid_attributes.frame_context.screen_mouse_pos);
-
-        fluid_attributes.frame_context.simulation_mouse_pos = fluid_attributes. frame_context.screen_mouse_pos;
-        fluid_attributes.frame_context.simulation_mouse_pos = scene_renderer.screenToWorld(fluid_attributes.frame_context.screen_mouse_pos);
 
         fluid_attributes.frame_context.dt = setDT;
 
@@ -171,13 +170,17 @@ struct SceneHandler {
             fluid_attributes.step = false;
         }
 
-        scene_renderer.render_scene();
-
         handle_zoom();
+
+        scene_renderer.render_scene();
 
         render_objects();
 
         display();
+
+        fluid_attributes.frame_context.prev_screen_mouse_pos = fluid_attributes.frame_context.screen_mouse_pos;
+        fluid_attributes.frame_context.prev_world_mouse_pos = fluid_attributes.frame_context.world_mouse_pos;
+        
     }
 
     void update_environment() {
@@ -188,11 +191,12 @@ struct SceneHandler {
             // 2) add a way to switch between particle view and liquid glass view
             // 3) Thread buffers EVERYWHERE
             // 4) implement Multi Grid, then MGPCG
-            // 5) make a sampleVelocity(point) function so that you can do RK2 advection easier
-            // 6) DDA raycasting & making sure that particle-particle collisions dont push particles into obstacles
-            // 7) implement implicit density projection
-            // 8) finish cleaning up all this code
-            // 9) make it so that you pass in static arrays instead of just numbers of particles in the main file
+            // 5) make a sampleVelocity(point) function that can easily incorporate different interpolation functions
+                // 6) so that you can do RK advection easier
+            // 7) DDA raycasting & making sure that particle-particle collisions dont push particles into obstacles
+            // 8) implement implicit density projection
+            // 9) finish cleaning up all this code
+            // 10) make it so that you pass in static arrays instead of just numbers of particles in the main file
         
         auto start = std::chrono::high_resolution_clock::now();
 
@@ -359,16 +363,30 @@ struct SceneHandler {
             }
             else if (event.type == sf::Event::KeyPressed) {
                 if (event.key.code == sf::Keyboard::B) {
-                    if (fluid_attributes.getFlipRatio() < 0.99f) {
-                        fluid_attributes.addToFlipRatio(0.01);
+                    if (lteEpsPlus(fluid_attributes.getFlipRatio(), 0.99f)) {
+                        bool smallIncrement = gteEpsMinus(fluid_attributes.getFlipRatio(), 0.9f);
+                        bool largeIncrement = ltEpsMinus(fluid_attributes.getFlipRatio(), 0.9f);
+                        fluid_attributes.addToFlipRatio(0.01 * smallIncrement + 0.1 * largeIncrement);
+
+                        if (fluid_attributes.getFlipRatio() > 1.f) {
+                            fluid_attributes.setFlipRatio(1.f);
+                        }
+
                         flipRatio_OSS.str("");  
                         flipRatio_OSS.clear();
                         flipRatio_OSS << std::fixed << std::setprecision(2) << fluid_attributes.getFlipRatio(); 
                     }
                 }
                 else if (event.key.code == sf::Keyboard::S) {
-                    if (fluid_attributes.getFlipRatio() > 0.01) {
-                        fluid_attributes.addToFlipRatio(-0.01);
+                    if (gteEpsMinus(fluid_attributes.getFlipRatio(), 0.1f)) {
+                        bool smallIncrement = gtEpsPlus(fluid_attributes.getFlipRatio(), 0.9f);
+                        bool largeIncrement = lteEpsPlus(fluid_attributes.getFlipRatio(), 0.9f);
+                        fluid_attributes.addToFlipRatio(-0.01 * smallIncrement - 0.1 * largeIncrement);
+
+                        if (fluid_attributes.getFlipRatio() < 0.f) {
+                            fluid_attributes.setFlipRatio(0.f);
+                        }
+
                         flipRatio_OSS.str("");  
                         flipRatio_OSS.clear();
                         flipRatio_OSS << std::fixed << std::setprecision(2) << fluid_attributes.getFlipRatio();
@@ -623,6 +641,9 @@ struct SceneHandler {
     }
 
     void handle_zoom() {
+        if (fluid_attributes.frame_context.leftMouseDown && scene_renderer.getZoomObjectActive()) {
+            scene_renderer.dragCamera();
+        }
         if (fluid_attributes.frame_context.zooming) {
             float zoom = fluid_attributes.frame_context.zoom_amount;
             float zoomed_particle_rad = fluid_attributes.radius / zoom;

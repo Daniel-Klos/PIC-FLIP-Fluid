@@ -5,6 +5,7 @@
 
 #include "thread_pool.hpp"
 #include "frame_context.hpp"
+#include "utils.hpp"
 
 struct FluidState {
     int num_particles;
@@ -13,16 +14,20 @@ struct FluidState {
     std::vector<int> cellType;
     std::vector<float> u;
     std::vector<float> v;
-    std::vector<float> du;
-    std::vector<float> dv;
+    std::vector<float> uGridWeights;
+    std::vector<float> vGridWeights;
     std::vector<float> prevU;
     std::vector<float> prevV;
     std::vector<float> cellDensities;       // density at each cell center
     std::vector<int> fluid_cells;
     std::vector<sf::Vector2i> obstaclePositions;
-    //std::vector<std::array<float, 4>> Cp;
-    //std::vector<float> densities;           // density at each particle
-    //std::vector<float> particle_densities;  // density of each particle
+    std::vector<float> affineMats; 
+    std::vector<Vector2vu> dxLefts;  // x_p - x_cell for u and v grids respectively
+    std::vector<Vector2vu> dxRights;
+    std::vector<Vector2vu> dyBottoms;
+    std::vector<Vector2vu> dyTops;
+    //std::vector<float> densities;     // density at each particle
+    //std::vector<float> masses;        // mass of each particle
     float cellSpacing;
     float halfSpacing;
     float invSpacing;
@@ -80,14 +85,20 @@ struct FluidState {
         cellType.resize(gridSize);
         u.resize(gridSize);
         v.resize(gridSize);
-        du.resize(gridSize);
-        dv.resize(gridSize);
+        uGridWeights.resize(gridSize);
+        vGridWeights.resize(gridSize);
         prevU.resize(gridSize);
         prevV.resize(gridSize);
         cellDensities.resize(gridSize);
         fluid_cells.resize(gridSize);
         /*densities.resize(num_particles);
-        particle_densities.resize(num_particles);*/
+        masses.resize(num_particles);*/
+        affineMats.resize(4 * num_particles);
+        std::fill(begin(affineMats), end(affineMats), 0.f);
+        dxLefts.resize(num_particles);
+        dxRights.resize(num_particles);
+        dyBottoms.resize(num_particles);
+        dyTops.resize(num_particles);
 
         numThreads = thread_pool.m_thread_count;
         particlesPerThread = num_particles / numThreads;
@@ -95,7 +106,7 @@ struct FluidState {
 
         // initialize all attributes you need to initialize for particles before sim starts
         /*for (int i = 0; i < num_particles; ++i) {
-            particle_densities[i] = (i < num_particles / 2) ? 0.9f : 0.1f;
+            masses[i] = (i < num_particles / 2) ? 0.9f : 0.1f;
         }*/
 
         // initializing particle positions
@@ -190,6 +201,10 @@ struct FluidState {
 
     void addToFlipRatio(const float add) {
         this->flipRatio += add;
+    }
+
+    void setFlipRatio(float set) {
+        this->flipRatio = set;
     }
 
     void addToGravityX(float add) {

@@ -252,8 +252,8 @@ public:
     void makeForceObjectQueries(const int32_t strength) {
         const int32_t numCovered = std::ceil(forceObjectSimRadius / scalingFactor);
 
-        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.x / scalingFactor);
-        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.y / scalingFactor);
+        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.world_mouse_pos.x / scalingFactor);
+        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.world_mouse_pos.y / scalingFactor);
 
         for (int32_t i = -numCovered; i < numCovered + 1; ++i) {
             for (int32_t j = -numCovered; j < numCovered + 1; ++j) {
@@ -265,8 +265,8 @@ public:
                 for (uint32_t id{0}; id < cell.objects_count; ++id) {
                     const uint32_t particleIndex = cell.objects[id];
 
-                    float dx = fluid_attributes.positions[particleIndex * 2] - fluid_attributes.frame_context.simulation_mouse_pos.x;
-                    float dy = fluid_attributes.positions[particleIndex * 2 + 1] - fluid_attributes.frame_context.simulation_mouse_pos.y;
+                    float dx = fluid_attributes.positions[particleIndex * 2] - fluid_attributes.frame_context.world_mouse_pos.x;
+                    float dy = fluid_attributes.positions[particleIndex * 2 + 1] - fluid_attributes.frame_context.world_mouse_pos.y;
                     float d2 = dx * dx + dy * dy;
 
                     if (d2 > checkForceObjectseparationDist || d2 == 0.0f) continue;
@@ -312,7 +312,7 @@ public:
         const float rightEdge = fluid_attributes.frame_context.WIDTH * (1.0f - percentRemoved);
 
         for (int i = start; i < end; ++i) {
-            if (fluid_attributes.positions[2 * i + 1] + fluid_attributes.radius > fluid_attributes.frame_context.HEIGHT - fluid_attributes.cellSpacing) {
+            if (fluid_attributes.positions[2 * i + 1] + fluid_attributes.radius > fluid_attributes.frame_context.HEIGHT - 2 * fluid_attributes.cellSpacing) {
                 const float remove = 10.f; // % of the floor from the sides that you want not heated
                 if (fluid_renderer.renderPattern == 3 && fluid_attributes.temperatures[i] < fluid_renderer.tempgradient.size() && !remove || (fluid_attributes.positions[2 * i] > leftEdge && fluid_attributes.positions[2 * i] < rightEdge)) {
                     fluid_attributes.temperatures[i] += fluid_attributes.groundConductivity * fluid_attributes.frame_context.dt;
@@ -379,10 +379,13 @@ public:
     }
 
     void includeDragObject() {
+        // Bug when you hold force object attract then switch to drag object while holding mouse down
         const float extend = (20 * fluid_attributes.cellSpacing) / fluid_attributes.frame_context.zoom_amount;
         if (fluid_attributes.frame_context.leftMouseDown) {
-            float vx = (dragObjectX - dragObjectPrevX) * 120;
-            float vy = (dragObjectY - dragObjectPrevY) * 120;
+            dragObjectX = fluid_attributes.frame_context.world_mouse_pos.x;
+            dragObjectY = fluid_attributes.frame_context.world_mouse_pos.y;
+            float vx = (dragObjectX - dragObjectPrevX) * fluid_attributes.frame_context.maxFps * !fluid_attributes.frame_context.justPressed;
+            float vy = (dragObjectY - dragObjectPrevY) * fluid_attributes.frame_context.maxFps * !fluid_attributes.frame_context.justPressed;
             int objectCellX = dragObjectX / fluid_attributes.cellSpacing;
             int objectCellY = dragObjectY / fluid_attributes.cellSpacing;
             int objectCellRadius = std::ceil(dragObjectSimRadius / fluid_attributes.cellSpacing);
@@ -413,16 +416,6 @@ public:
             }
             dragObjectPrevX = dragObjectX;
             dragObjectPrevY = dragObjectY;
-            dragObjectX = fluid_attributes.frame_context.simulation_mouse_pos.x;
-            dragObjectY = fluid_attributes.frame_context.simulation_mouse_pos.y;
-            if (fluid_attributes.frame_context.justPressed) {
-                dragObjectPrevX = dragObjectX;
-                dragObjectPrevY = dragObjectY;
-            }
-        }
-        else {
-            dragObjectPrevX = dragObjectX;
-            dragObjectPrevY = dragObjectY;
         }
     }
 
@@ -432,11 +425,11 @@ public:
         int highNum = wideNum;
         int numPotentiallyAdded = wideNum * highNum;
 
-        float generatorRightBound = fluid_attributes.frame_context.simulation_mouse_pos.x + generatorObjectSimRadius;
-        float generatorBottomBound = fluid_attributes.frame_context.simulation_mouse_pos.y + generatorObjectSimRadius;
+        float generatorRightBound = fluid_attributes.frame_context.world_mouse_pos.x + generatorObjectSimRadius;
+        float generatorBottomBound = fluid_attributes.frame_context.world_mouse_pos.y + generatorObjectSimRadius;
 
-        float starting_px = std::max(fluid_attributes.frame_context.simulation_mouse_pos.x - generatorObjectSimRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
-        float starting_py = std::max(fluid_attributes.frame_context.simulation_mouse_pos.y - generatorObjectSimRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
+        float starting_px = std::max(fluid_attributes.frame_context.world_mouse_pos.x - generatorObjectSimRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
+        float starting_py = std::max(fluid_attributes.frame_context.world_mouse_pos.y - generatorObjectSimRadius + fluid_attributes.radius, fluid_attributes.cellSpacing + fluid_attributes.radius);
         float px = starting_px;
         float py = starting_py;
         bool offset = true;
@@ -513,21 +506,27 @@ public:
         this->collisions.resize(fluid_attributes.num_particles);
         fluid_attributes.temperatures.resize(fluid_attributes.num_particles);
 
-        transfer_grid.nr0.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.nr1.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.nr2.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.nr3.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topLeftCells.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topRightCells.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomLeftCells.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomRightCells.resize(2 * fluid_attributes.num_particles);
 
-        transfer_grid.d0.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.d1.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.d2.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topLeftWeights.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topRightWeights.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomLeftWeights.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomRightWeights.resize(2 * fluid_attributes.num_particles);
+
+        fluid_attributes.affineMats.resize(4 * fluid_attributes.num_particles); 
+        fluid_attributes.dxLefts.resize(fluid_attributes.num_particles);
+        fluid_attributes.dxRights.resize(fluid_attributes.num_particles);
+        fluid_attributes.dyBottoms.resize(fluid_attributes.num_particles);
+        fluid_attributes.dyTops.resize(fluid_attributes.num_particles);
     }
 
     void remove() {
         const int32_t numCovered = std::ceil(generatorObjectSimRadius / scalingFactor);
-        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.x / scalingFactor);
-        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.simulation_mouse_pos.y / scalingFactor);
+        const uint32_t mouseColumn = std::floor(fluid_attributes.frame_context.world_mouse_pos.x / scalingFactor);
+        const uint32_t mouseRow = std::floor(fluid_attributes.frame_context.world_mouse_pos.y / scalingFactor);
         const size_t len = fluid_attributes.temperatures.size();
         const size_t double_len = 2 * len;
         const size_t triple_len = fluid_renderer.particleColors.size();
@@ -607,15 +606,15 @@ public:
         this->collisions.resize(fluid_attributes.num_particles);
         fluid_attributes.temperatures.resize(fluid_attributes.num_particles);
     
-        transfer_grid.nr0.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.nr1.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.nr2.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.nr3.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topLeftCells.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topRightCells.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomLeftCells.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomRightCells.resize(2 * fluid_attributes.num_particles);
     
-        transfer_grid.d0.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.d1.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.d2.resize(2 * fluid_attributes.num_particles);
-        transfer_grid.d3.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topLeftWeights.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.topRightWeights.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomLeftWeights.resize(2 * fluid_attributes.num_particles);
+        transfer_grid.bottomRightWeights.resize(2 * fluid_attributes.num_particles);
     }
 
     void drawDragObject(sf::RenderWindow& window) {

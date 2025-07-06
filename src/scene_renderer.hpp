@@ -71,7 +71,12 @@ struct SceneRenderer {
     }
 
     void dragCamera() {
+        sf::Vector2f screen_delta = fluid_attributes.frame_context.screen_mouse_pos - fluid_attributes.frame_context.prev_screen_mouse_pos;
+        
+        sf::Vector2f world_delta = screen_delta / fluid_attributes.frame_context.zoom_amount;
 
+        fluid_attributes.frame_context.offset -= world_delta;
+        zoom_scene();
     }
 
     void normalize_objects() {

@@ -22,10 +22,11 @@ int main()
     int numParticles = 30000; // 20000 --- start with a kinda large number so that good density sample is taken at the start of the simulation
     float gravityY = 5500.f; // 5500
     float gravityX = 0.f;
-    int gridNumX = 350; // 350
+    int gridNumX = 348; // 350
     float diffusionRatio = 0.75f; 
-    float flipRatio = 0.9f;
+    float flipRatio = 0.9f; // 0.9f
     float vorticityStrength = 0.f;
+    int maxFps = 120;
     uint32_t numThreads = 6; // 6
 
     const uint32_t maxThreads = std::thread::hardware_concurrency();
@@ -40,7 +41,7 @@ int main()
 
     sf::RenderWindow window(sf::VideoMode(fluid_attributes.frame_context.WIDTH, fluid_attributes.frame_context.HEIGHT), "FLIP Simulation");
 
-    SceneHandler scene_handler = SceneHandler(fluid_attributes, window);
+    SceneHandler scene_handler = SceneHandler(fluid_attributes, window, maxFps);
 
     while(window.isOpen()) {
         scene_handler.simulate();

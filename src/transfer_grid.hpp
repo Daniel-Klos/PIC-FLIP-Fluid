@@ -20,37 +20,37 @@ class TransferGrid {
 
     CollisionGrid cellOccupantsGrid;
 
-    std::vector<std::vector<float>> threadDensities;
+    std::vector<std::vector<float>> threadGridBuffers;
 
 public:
-    std::vector<int32_t> nr0;
-    std::vector<int32_t> nr1;
-    std::vector<int32_t> nr2;
-    std::vector<int32_t> nr3;
+    std::vector<int32_t> topLeftCells;
+    std::vector<int32_t> topRightCells;
+    std::vector<int32_t> bottomRightCells;
+    std::vector<int32_t> bottomLeftCells;
 
-    std::vector<float> d0;
-    std::vector<float> d1;
-    std::vector<float> d2;
-    std::vector<float> d3;
+    std::vector<float> topLeftWeights;
+    std::vector<float> topRightWeights;
+    std::vector<float> bottomLeftWeights;
+    std::vector<float> bottomRightWeights;
 
     TransferGrid(FluidState &fas): fluid_attributes(fas) {
         invSpacing =  1.f / fluid_attributes.cellSpacing;
         halfSpacing = 0.5f * fluid_attributes.cellSpacing;
         n = fluid_attributes.numY;
 
-        nr0.resize(2 * fluid_attributes.num_particles);
-        nr1.resize(2 * fluid_attributes.num_particles);
-        nr2.resize(2 * fluid_attributes.num_particles);
-        nr3.resize(2 * fluid_attributes.num_particles);
+        topLeftCells.resize(2 * fluid_attributes.num_particles);
+        topRightCells.resize(2 * fluid_attributes.num_particles);
+        bottomRightCells.resize(2 * fluid_attributes.num_particles);
+        bottomLeftCells.resize(2 * fluid_attributes.num_particles);
     
-        d0.resize(2 * fluid_attributes.num_particles);
-        d1.resize(2 * fluid_attributes.num_particles);
-        d2.resize(2 * fluid_attributes.num_particles);
-        d3.resize(2 * fluid_attributes.num_particles);
+        topLeftWeights.resize(2 * fluid_attributes.num_particles);
+        topRightWeights.resize(2 * fluid_attributes.num_particles);
+        bottomLeftWeights.resize(2 * fluid_attributes.num_particles);
+        bottomRightWeights.resize(2 * fluid_attributes.num_particles);
 
-        threadDensities.resize(fluid_attributes.numThreads);
+        threadGridBuffers.resize(fluid_attributes.numThreads);
         for (int i = 0; i < fluid_attributes.numThreads; ++i) {
-            threadDensities[i].resize(fluid_attributes.gridSize, 0.f);
+            threadGridBuffers[i].resize(fluid_attributes.gridSize, 0.f);
         }
 
         SOLID_CELL = fluid_attributes.SOLID_CELL;
@@ -68,13 +68,14 @@ public:
 
     void TransferToParticles() {
         fluid_attributes.thread_pool.dispatch(fluid_attributes.num_particles, [this](int start, int end) {
-            transferToParticle(start, end);
+            transferUGridToParticles(start, end);
+            transferVGridToParticles(start, end);
         });
     }
 
     void updateCellDensitiesMulti() {
         std::fill(begin(fluid_attributes.cellDensities), end(fluid_attributes.cellDensities), 0.f);
-        for (auto& vec : threadDensities) {
+        for (auto& vec : threadGridBuffers) {
             std::fill(vec.begin(), vec.end(), 0.f);
         }
 
@@ -94,13 +95,18 @@ public:
     }
 
 private:
-    // pgridx = 
-    void interpolateTo(float px, float py, float pgridx, float pgridy, float& topL) {
 
+    float Weight(float distX, float distY) {
+        return distX * distY;
     }
 
-    void cacheWeightsAt(int pIdx, int component, int RKstep) {
-        const float dx = (component != 0) * halfSpacing;
+    float WeightDerivative(bool positive) {
+        return -1.f + 2.f * positive;
+    }
+
+    // add RKstep as a parameter
+    void cacheWeightsAt(int pIdx, int component) {
+        const float dx = (component == 1) * halfSpacing;
         const float dy = (component == 0) * halfSpacing;
 
         float px = fluid_attributes.positions[2 * pIdx];
@@ -109,56 +115,61 @@ private:
         px = clamp(px, fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
         py = clamp(py, fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
 
-        // x0 is the grid position to the left of the particle, x1 is the position to the right of the particle
-        int x0 = std::max(1, std::min(static_cast<int>(std::floor((px - dx) * invSpacing)), fluid_attributes.numX - 2)); // - 1
-        // x - xCell to get the lerp weight of that cell in relation to the particle
-        float tx = ((px - dx) - x0 * fluid_attributes.cellSpacing) * invSpacing;
-        int x1 = std::min(x0 + 1, fluid_attributes.numX - 2); // - 1
-        // this fixes a bug that makes water touching the left wall and ceiling explode sometimes -> doesn't allow pos - offset to sample out of bounds
+        // set first argument to 0 if you want fluid touching left wall to go down
+        int x0 = std::max(1, std::min(static_cast<int>(std::floor((px - dx) * invSpacing)), fluid_attributes.numX - 2));
+        int x1 = std::min(x0 + 1, fluid_attributes.numX - 2);
+
+        // this stops the fluid touching the left wall from going down
         if (component == 0 && x0 == 1) { // ceiling
             x0 = x1;
         }
-        if (component == 1 && x0 == 1) { // wall
+        if (component == 1 && x0 == 1) { // left wall
             x1 = x0;
         }
-        // same thing with y
-        int y0 = std::max(0, std::min(static_cast<int>(std::floor((py - dy) * invSpacing)), fluid_attributes.numY - 2)); // - 2
-        float ty = ((py - dy) - y0 * fluid_attributes.cellSpacing) * invSpacing;
-        int y1 = std::min(y0 + 1, fluid_attributes.numY - 1); // - 1
+        
+        int y0 = std::max(0, std::min(static_cast<int>(std::floor((py - dy) * invSpacing)), fluid_attributes.numY - 2));
+        int y1 = std::min(y0 + 1, fluid_attributes.numY - 1);
 
-        float sx = 1.f - tx;
-        float sy = 1.f - ty;
+        float dxLeft = ((px - dx) - x0 * fluid_attributes.cellSpacing) * invSpacing;
+        float dyTop = ((py - dy) - y0 * fluid_attributes.cellSpacing) * invSpacing;
+        float dxRight = 1.f - dxLeft;
+        float dyBottom = 1.f - dyTop;
+
+        fluid_attributes.dxLefts[pIdx].vu[component] = -dxLeft;
+        fluid_attributes.dyTops[pIdx].vu[component] = -dyTop;
+        fluid_attributes.dxRights[pIdx].vu[component] = dxRight;
+        fluid_attributes.dyBottoms[pIdx].vu[component] = dyBottom;
 
         int gIdx = 2 * pIdx + component;
-        // weights for each corner in u/v field
-        d0[gIdx] = sx * sy; //* fluid_attributes.particle_densities[pIdx];
-        d1[gIdx] = tx * sy; //* fluid_attributes.particle_densities[pIdx];
-        d2[gIdx] = tx * ty; //* fluid_attributes.particle_densities[pIdx];
-        d3[gIdx] = sx * ty; //* fluid_attributes.particle_densities[pIdx];
+    
+        topLeftWeights[gIdx] = Weight(dxRight, dyBottom); //* fluid_attributes.masses[pIdx];
+        topRightWeights[gIdx] = Weight(dxLeft, dyBottom); //* fluid_attributes.masses[pIdx];
+        bottomLeftWeights[gIdx] = Weight(dxRight, dyTop); //* fluid_attributes.masses[pIdx];
+        bottomRightWeights[gIdx] = Weight(dxLeft, dyTop); //* fluid_attributes.masses[pIdx];
 
-        nr0[gIdx] = x0 * n + y0; // top left
-        nr1[gIdx] = x1 * n + y0; // top right
-        nr2[gIdx] = x1 * n + y1; // bottom right
-        nr3[gIdx] = x0 * n + y1; // bottom left
+        topLeftCells[gIdx] = x0 * n + y0;
+        topRightCells[gIdx] = x1 * n + y0;
+        bottomLeftCells[gIdx] = x0 * n + y1;
+        bottomRightCells[gIdx] = x1 * n + y1;
     }
 
-    // make nr0 a vector of arrays of size whatever RK you need
-    void cacheTransferNodes(int32_t start, int32_t end, float halfHeight, int32_t component) {
+    // make topLeftCell a vector of arrays of size whatever RK you need
+    void cacheTransferNodes(int32_t start, int32_t end, int32_t component) {
         for (int32_t i = start; i < end; ++i) {
-            cacheWeightsAt(i, component, 0);
+            cacheWeightsAt(i, component);
         }
     }
 
     void cacheTransferNodesMulti() {
         for (int32_t i = 0; i < fluid_attributes.numThreads; ++i) {
             fluid_attributes.thread_pool.addTask([&, i](){
-                cacheTransferNodes(fluid_attributes.particlesPerThread * i, fluid_attributes.particlesPerThread * i + fluid_attributes.particlesPerThread, halfSpacing, 0);
-                cacheTransferNodes(fluid_attributes.particlesPerThread * i, fluid_attributes.particlesPerThread * i + fluid_attributes.particlesPerThread, halfSpacing, 1);
+                cacheTransferNodes(fluid_attributes.particlesPerThread * i, fluid_attributes.particlesPerThread * i + fluid_attributes.particlesPerThread, 0);
+                cacheTransferNodes(fluid_attributes.particlesPerThread * i, fluid_attributes.particlesPerThread * i + fluid_attributes.particlesPerThread, 1);
             });
         }
 
-        cacheTransferNodes(fluid_attributes.num_particles - fluid_attributes.numMissedParticles, fluid_attributes.num_particles, halfSpacing, 0);
-        cacheTransferNodes(fluid_attributes.num_particles - fluid_attributes.numMissedParticles, fluid_attributes.num_particles, halfSpacing, 1);
+        cacheTransferNodes(fluid_attributes.num_particles - fluid_attributes.numMissedParticles, fluid_attributes.num_particles, 0);
+        cacheTransferNodes(fluid_attributes.num_particles - fluid_attributes.numMissedParticles, fluid_attributes.num_particles, 1);
 
         fluid_attributes.thread_pool.waitForCompletion();
     }
@@ -166,8 +177,8 @@ private:
     void setUpTransferGrids() {
         std::copy(std::begin(fluid_attributes.u), std::end(fluid_attributes.u), std::begin(fluid_attributes.prevU));
         std::copy(std::begin(fluid_attributes.v), std::end(fluid_attributes.v), std::begin(fluid_attributes.prevV));
-        std::fill(begin(fluid_attributes.du), end(fluid_attributes.du), 0.f);
-        std::fill(begin(fluid_attributes.dv), end(fluid_attributes.dv), 0.f);
+        std::fill(begin(fluid_attributes.uGridWeights), end(fluid_attributes.uGridWeights), 0.f);
+        std::fill(begin(fluid_attributes.vGridWeights), end(fluid_attributes.vGridWeights), 0.f);
         std::fill(begin(fluid_attributes.u), end(fluid_attributes.u), 0.f);
         std::fill(begin(fluid_attributes.v), end(fluid_attributes.v), 0.f);
 
@@ -180,9 +191,7 @@ private:
             }
         }
 
-        // initialize all cells that particles are in to fluid
-        // also initialize total number of fluid cells and active uv nodes
-        // gonna have to change how num_uv_active is counted if you wanna multithread this code
+        // initialize all cells that particles are in to fluid and store fluid cells
         fluid_attributes.num_fluid_cells = 0;
         for (int i = 0; i < fluid_attributes.num_particles; ++i) {
             float x = fluid_attributes.positions[2 * i];
@@ -227,43 +236,68 @@ private:
         const auto cell = cellOccupantsGrid.data[idx];
     
         for (uint32_t id{0}; id < cell.objects_count; ++id) {
-            const uint32_t particleIndex = cell.objects[id];
+            const uint32_t pIdx = cell.objects[id];
 
-            const int32_t ui = 2 * particleIndex;
-            const int32_t vi = 2 * particleIndex + 1;
+            const int32_t ui = 2 * pIdx;
 
-            const int32_t nr0_u = nr0[ui];
-            const int32_t nr1_u = nr1[ui];
-            const int32_t nr2_u = nr2[ui];
-            const int32_t nr3_u = nr3[ui];
+            int32_t topLeftCell_u = topLeftCells[ui];
+            int32_t topRightCell_u = topRightCells[ui];
+            int32_t bottomRightCell_u = bottomRightCells[ui];
+            int32_t bottomLeftCell_u = bottomLeftCells[ui];
 
-            const float d0_u = d0[ui];
-            const float d1_u = d1[ui];
-            const float d2_u = d2[ui];
-            const float d3_u = d3[ui];
+            float topLeftWeight_u = topLeftWeights[ui];
+            float topRightWeight_u = topRightWeights[ui];
+            float bottomLeftWeight_u = bottomLeftWeights[ui];
+            float bottomRightWeight_u = bottomRightWeights[ui];
 
-            const float pvx = fluid_attributes.velocities[ui];
-            const float pvy = fluid_attributes.velocities[vi];
+            float pvx = fluid_attributes.velocities[ui];
+
+            float leftDist = fluid_attributes.dxLefts[pIdx].vu[1];
+            float rightDist = fluid_attributes.dxRights[pIdx].vu[1];
+            float bottomDist = fluid_attributes.dyBottoms[pIdx].vu[1];
+            float topDist = fluid_attributes.dyTops[pIdx].vu[1];
+
+            int matIdx = 4 * pIdx;
+
+            float C11 = fluid_attributes.affineMats[matIdx];
+            float C12 = fluid_attributes.affineMats[matIdx + 1];
+
+            float affinepvxBottomLeft = pvx + 
+                                    C11 * leftDist + 
+                                    C12 * bottomDist;
+
+            float affinepvxBottomRight = pvx + 
+                                    C11 * rightDist + 
+                                    C12 * bottomDist;
+
+            float affinepvxTopLeft = pvx + 
+                                    C11 * leftDist + 
+                                    C12 * topDist;
+
+            float affinepvTopRight = pvx + 
+                                    C11 * rightDist + 
+                                    C12 * topDist;
            
-            fluid_attributes.u[nr0_u] += pvx * d0_u;  
-            fluid_attributes.u[nr1_u] += pvx * d1_u;
-            fluid_attributes.u[nr2_u] += pvx * d2_u;
-            fluid_attributes.u[nr3_u] += pvx * d3_u;
+            /*fluid_attributes.u[topLeftCell_u] += affinepvxTopLeft * topLeftWeight_u;  
+            fluid_attributes.u[topRightCell_u] += affinepvTopRight * topRightWeight_u;
+            fluid_attributes.u[bottomLeftCell_u] += affinepvxBottomLeft * bottomLeftWeight_u;
+            fluid_attributes.u[bottomRightCell_u] += affinepvxBottomRight * bottomRightWeight_u;*/
 
-            fluid_attributes.du[nr0_u] += d0_u;
-            fluid_attributes.du[nr1_u] += d1_u;
-            fluid_attributes.du[nr2_u] += d2_u;
-            fluid_attributes.du[nr3_u] += d3_u;
+            fluid_attributes.u[topLeftCell_u] += pvx * topLeftWeight_u;  
+            fluid_attributes.u[topRightCell_u] += pvx * topRightWeight_u;
+            fluid_attributes.u[bottomLeftCell_u] += pvx * bottomLeftWeight_u;
+            fluid_attributes.u[bottomRightCell_u] += pvx * bottomRightWeight_u;
+
+            fluid_attributes.uGridWeights[topLeftCell_u] += topLeftWeight_u;
+            fluid_attributes.uGridWeights[topRightCell_u] += topRightWeight_u;
+            fluid_attributes.uGridWeights[bottomLeftCell_u] += bottomLeftWeight_u;
+            fluid_attributes.uGridWeights[bottomRightCell_u] += bottomRightWeight_u;
         }
     }
 
     void transferToUGrid(int start, int end) {
-
         for (int i = start; i < end; ++i) {
-            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                int idx = i * n + j;
-                transferToUGridCells(idx);
-            }
+            transferToUGridCells(fluid_attributes.fluid_cells[i]);
         }
     }
 
@@ -271,64 +305,112 @@ private:
         const auto cell = cellOccupantsGrid.data[idx];
     
         for (uint32_t id{0}; id < cell.objects_count; ++id) {
-            const uint32_t particleIndex = cell.objects[id];
+            const uint32_t pIdx = cell.objects[id];
 
-            const int32_t ui = 2 * particleIndex;
-            const int32_t vi = 2 * particleIndex + 1;
+            const int32_t vi = 2 * pIdx + 1;
 
-            const int32_t nr0_v = nr0[vi];
-            const int32_t nr1_v = nr1[vi];
-            const int32_t nr2_v = nr2[vi];
-            const int32_t nr3_v = nr3[vi];
+            const int32_t topLeftCell_v = topLeftCells[vi];
+            const int32_t topRightCell_v = topRightCells[vi];
+            const int32_t bottomRightCell_v = bottomRightCells[vi];
+            const int32_t bottomLeftCell_v = bottomLeftCells[vi];
 
-            const float d0_v = d0[vi];
-            const float d1_v = d1[vi];
-            const float d2_v = d2[vi];
-            const float d3_v = d3[vi];
+            const float topLeftWeight_v = topLeftWeights[vi];
+            const float topRightWeight_v = topRightWeights[vi];
+            const float bottomLeftWeight_v = bottomLeftWeights[vi];
+            const float bottomRightWeight_v = bottomRightWeights[vi];
 
-            const float pvx = fluid_attributes.velocities[ui];
             const float pvy = fluid_attributes.velocities[vi];
-    
-            fluid_attributes.v[nr0_v] += pvy * d0_v;  
-            fluid_attributes.v[nr1_v] += pvy * d1_v;
-            fluid_attributes.v[nr2_v] += pvy * d2_v;
-            fluid_attributes.v[nr3_v] += pvy * d3_v;
 
-            fluid_attributes.dv[nr0_v] += d0_v;
-            fluid_attributes.dv[nr1_v] += d1_v;
-            fluid_attributes.dv[nr2_v] += d2_v;
-            fluid_attributes.dv[nr3_v] += d3_v;
+            float leftDist = fluid_attributes.dxLefts[pIdx].vu[0];
+            float rightDist = fluid_attributes.dxRights[pIdx].vu[0];
+            float bottomDist = fluid_attributes.dyBottoms[pIdx].vu[0];
+            float topDist = fluid_attributes.dyTops[pIdx].vu[0];
+
+            int matIdx = 4 * pIdx;
+
+            float C21 = fluid_attributes.affineMats[matIdx + 2];
+            float C22 = fluid_attributes.affineMats[matIdx + 3];
+
+            float affinepvyBottomLeft = pvy + 
+                                    C21 * leftDist + 
+                                    C22 * bottomDist;
+
+            float affinepvyBottomRight = pvy + 
+                                    C21 * rightDist + 
+                                    C22 * bottomDist;
+
+            float affinepvyTopLeft = pvy + 
+                                    C21 * leftDist + 
+                                    C22 * topDist;
+
+            float affinepvyTopRight = pvy + 
+                                    C21 * rightDist + 
+                                    C22 * topDist;
+    
+            /*fluid_attributes.v[topLeftCell_v] += affinepvyTopLeft * topLeftWeight_v;  
+            fluid_attributes.v[topRightCell_v] += affinepvyTopRight * topRightWeight_v;
+            fluid_attributes.v[bottomLeftCell_v] += affinepvyBottomLeft * bottomLeftWeight_v;
+            fluid_attributes.v[bottomRightCell_v] += affinepvyBottomRight * bottomRightWeight_v;*/
+
+            fluid_attributes.v[topLeftCell_v] += pvy * topLeftWeight_v;  
+            fluid_attributes.v[topRightCell_v] += pvy * topRightWeight_v;
+            fluid_attributes.v[bottomLeftCell_v] += pvy * bottomLeftWeight_v;
+            fluid_attributes.v[bottomRightCell_v] += pvy * bottomRightWeight_v;
+
+            fluid_attributes.vGridWeights[topLeftCell_v] += topLeftWeight_v;
+            fluid_attributes.vGridWeights[topRightCell_v] += topRightWeight_v;
+            fluid_attributes.vGridWeights[bottomLeftCell_v] += bottomLeftWeight_v;
+            fluid_attributes.vGridWeights[bottomRightCell_v] += bottomRightWeight_v;
         }
     }
 
     void transferToVGrid(int start, int end) {
-
         for (int i = start; i < end; ++i) {
-            for (int j = 1; j < fluid_attributes.numY - 1; ++j) {
-                int idx = i * n + j;
-                transferToVGridCells(idx);
-            }
+            transferToVGridCells(fluid_attributes.fluid_cells[i]);
         }
     }
 
-    void normalizeGridInterpolations(int start, int end) {
+    void momentumToVelocity(int start, int end) {
         for (int i = start; i < end; ++i) {
-            float prevNode = fluid_attributes.du[i];
+            float prevNode = fluid_attributes.uGridWeights[i];
             if (prevNode > 0.f) {
                 fluid_attributes.u[i] /= prevNode;
             }
-            prevNode = fluid_attributes.dv[i];
+            prevNode = fluid_attributes.vGridWeights[i];
             if (prevNode > 0.f) {
                 fluid_attributes.v[i] /= prevNode;
             }
         }
     }
 
-    void normalizeGridInterpolationsMulti() {
+    void momentumToVelocityMulti() {
         fluid_attributes.thread_pool.dispatch(fluid_attributes.gridSize, [this](int start, int end) {
+            momentumToVelocity(start, end);
+        });
+    }
+
+    /*
+    void normalizeGridInterpolations(int start, int end) {
+        for (int i = start; i < end; ++i) {
+            int cellNr = fluid_attributes.fluid_cells[i];
+            
+            float prevNode = fluid_attributes.du[cellNr];
+            if (prevNode > 0.f) {
+                fluid_attributes.u[cellNr] /= prevNode;
+            }
+            prevNode = fluid_attributes.dv[cellNr];
+            if (prevNode > 0.f) {
+                fluid_attributes.v[cellNr] /= prevNode;
+            }
+        }
+    }
+
+    void normalizeGridInterpolationsMulti() {
+        fluid_attributes.thread_pool.dispatch(fluid_attributes.num_fluid_cells, [this](int start, int end) {
             normalizeGridInterpolations(start, end);
         });
     }
+    */
 
     void enforceNoSlip(int start, int end) {
         for (int i = start; i < end; ++i) {
@@ -352,22 +434,21 @@ private:
     }
 
     void transferParticleVelocitiesToGridMulti() {
-        // multithread splat to local thread buffer u/v and du/dv, then accumulate changes
         const int32_t numThreads = fluid_attributes.numThreads;
-        const int32_t numColumnsPerThread = (fluid_attributes.numX - 2) / numThreads;
-        const int32_t numMissedColumns = fluid_attributes.numX - 2 - numColumnsPerThread * numThreads;
+        const int32_t numCellsPerThread = fluid_attributes.num_fluid_cells / numThreads;
+        const int32_t numMissedColumns = fluid_attributes.num_fluid_cells - numCellsPerThread * numThreads;
 
         for (int i = 0; i < numThreads; ++i) {
-            int start = i * numColumnsPerThread;
-            int end = (i == numThreads - 1) ? (fluid_attributes.numX - 1) : (start + numColumnsPerThread);
+            int start = i * numCellsPerThread;
+            int end = (i == numThreads - 1) ? (fluid_attributes.num_fluid_cells) : (start + numCellsPerThread);
             fluid_attributes.thread_pool.addTask([&, start, end]() {
                 transferToUGrid(start, end);
             });
         }
 
         for (int i = 0; i < numThreads; ++i) {
-            int start = i * numColumnsPerThread;
-            int end = (i == numThreads - 1) ? (fluid_attributes.numX - 1) : (start + numColumnsPerThread);
+            int start = i * numCellsPerThread;
+            int end = (i == numThreads - 1) ? (fluid_attributes.num_fluid_cells) : (start + numCellsPerThread);
             fluid_attributes.thread_pool.addTask([&, start, end]() {
                 transferToVGrid(start, end);
             });
@@ -375,7 +456,7 @@ private:
 
         fluid_attributes.thread_pool.waitForCompletion();
 
-        normalizeGridInterpolationsMulti();
+        momentumToVelocityMulti();
 
         enforceNoSlipMulti();
 
@@ -384,68 +465,159 @@ private:
         std::copy(std::begin(fluid_attributes.v), std::end(fluid_attributes.v), std::begin(fluid_attributes.prevV));
     }
 
-
-
-    void transferToParticle(int32_t startIndex, int32_t endIndex) {
+    void transferUGridToParticles(int32_t startIndex, int32_t endIndex) {
         for (int32_t i = startIndex; i < endIndex; ++i) {
-            const int32_t ui = 2 * i;
-            const int32_t vi = 2 * i + 1;
-            const int32_t nr0_u = nr0[ui];
-            const int32_t nr1_u = nr1[ui];
-            const int32_t nr2_u = nr2[ui];
-            const int32_t nr3_u = nr3[ui];
+            int ui = 2 * i;
+            float pvx = fluid_attributes.velocities[ui];
+            int matIdx = 4 * i;
 
-            const float d0_u = d0[ui];
-            const float d1_u = d1[ui];
-            const float d2_u = d2[ui];
-            const float d3_u = d3[ui];
+            int topLeftCell = topLeftCells[ui];
+            int topRightCell = topRightCells[ui];
+            int bottomRightCell = bottomRightCells[ui];
+            int bottomLeftCell = bottomLeftCells[ui];
 
-            const int32_t nr0_v = nr0[vi];
-            const int32_t nr1_v = nr1[vi];
-            const int32_t nr2_v = nr2[vi];
-            const int32_t nr3_v = nr3[vi];
+            float topLeftWeight = topLeftWeights[ui];
+            float topRightWeight = topRightWeights[ui];
+            float bottomLeftWeight = bottomLeftWeights[ui];
+            float bottomRightWeight = bottomRightWeights[ui];
 
-            const float d0_v = d0[vi];
-            const float d1_v = d1[vi];
-            const float d2_v = d2[vi];
-            const float d3_v = d3[vi];
-
-            const float pvx = fluid_attributes.velocities[ui];
-            const float pvy = fluid_attributes.velocities[vi];
+            float gridVel_topLeft = fluid_attributes.u[topLeftCell];
+            float gridVel_topRight = fluid_attributes.u[topRightCell];
+            float gridVel_bottomRight = fluid_attributes.u[bottomRightCell];
+            float gridVel_bottomLeft = fluid_attributes.u[bottomLeftCell];
            
-            // AIR_CELL check logic
-            const float valid0u = fluid_attributes.cellType[nr0_u] != AIR_CELL || fluid_attributes.cellType[nr0_u - n] != AIR_CELL;
-            const float valid1u = fluid_attributes.cellType[nr1_u] != AIR_CELL || fluid_attributes.cellType[nr1_u - n] != AIR_CELL;
-            const float valid2u = fluid_attributes.cellType[nr2_u] != AIR_CELL || fluid_attributes.cellType[nr2_u - n] != AIR_CELL;
-            const float valid3u = fluid_attributes.cellType[nr3_u] != AIR_CELL || fluid_attributes.cellType[nr3_u - n] != AIR_CELL;
+            const float validTopLeftWeight = fluid_attributes.cellType[topLeftCell] != AIR_CELL || 
+                                             fluid_attributes.cellType[topLeftCell - n] != AIR_CELL;
+            const float validTopRightWeight = fluid_attributes.cellType[topRightCell] != AIR_CELL || 
+                                              fluid_attributes.cellType[topRightCell - n] != AIR_CELL;
+            const float validBottomLeftWeight = fluid_attributes.cellType[bottomLeftCell] != AIR_CELL || 
+                                                fluid_attributes.cellType[bottomLeftCell - n] != AIR_CELL;
+            const float validBottomRightWeight = fluid_attributes.cellType[bottomRightCell] != AIR_CELL || 
+                                                 fluid_attributes.cellType[bottomRightCell - n] != AIR_CELL;
 
-            const float valid0v = fluid_attributes.cellType[nr0_v] != AIR_CELL || fluid_attributes.cellType[nr0_v - 1] != AIR_CELL;
-            const float valid1v = fluid_attributes.cellType[nr1_v] != AIR_CELL || fluid_attributes.cellType[nr1_v - 1] != AIR_CELL;
-            const float valid2v = fluid_attributes.cellType[nr2_v] != AIR_CELL || fluid_attributes.cellType[nr2_v - 1] != AIR_CELL;
-            const float valid3v = fluid_attributes.cellType[nr3_v] != AIR_CELL || fluid_attributes.cellType[nr3_v - 1] != AIR_CELL;
-
-            const float divX = valid0u * d0_u + valid1u * d1_u + valid2u * d2_u + valid3u * d3_u;
-            const float divY = valid0v * d0_v + valid1v * d1_v + valid2v * d2_v + valid3v * d3_v;
+            const float divX = validTopLeftWeight * topLeftWeight + validTopRightWeight * topRightWeight + validBottomLeftWeight * bottomLeftWeight + validBottomRightWeight * bottomRightWeight;
 
             float picV;
             float corr;
             float flipV;
 
             if (divX > 0.f) {
-                picV = (valid0u * d0_u * fluid_attributes.u[nr0_u] + valid1u * d1_u * fluid_attributes.u[nr1_u] + valid2u * d2_u * fluid_attributes.u[nr2_u] + valid3u * d3_u * fluid_attributes.u[nr3_u]) / divX;
+                picV = (validTopLeftWeight * topLeftWeight * gridVel_topLeft + 
+                        validTopRightWeight * topRightWeight * gridVel_topRight + 
+                        validBottomLeftWeight * bottomLeftWeight * gridVel_bottomLeft + 
+                        validBottomRightWeight * bottomRightWeight * gridVel_bottomRight
+                        ) / divX;
 
-                corr = (valid0u * d0_u * (fluid_attributes.u[nr0_u] - fluid_attributes.prevU[nr0_u]) + valid1u * d1_u * (fluid_attributes.u[nr1_u] - fluid_attributes.prevU[nr1_u]) + valid2u * d2_u * (fluid_attributes.u[nr2_u] - fluid_attributes.prevU[nr2_u]) + valid3u * d3_u * (fluid_attributes.u[nr3_u] - fluid_attributes.prevU[nr3_u])) / divX;
+                corr = (validTopLeftWeight * topLeftWeight * (gridVel_topLeft - fluid_attributes.prevU[topLeftCell]) + 
+                        validTopRightWeight * topRightWeight * (gridVel_topRight - fluid_attributes.prevU[topRightCell]) + 
+                        validBottomLeftWeight * bottomLeftWeight * (gridVel_bottomLeft - fluid_attributes.prevU[bottomLeftCell]) + 
+                        validBottomRightWeight * bottomRightWeight * (gridVel_bottomRight - fluid_attributes.prevU[bottomRightCell])
+                        ) / divX;
+
                 flipV = pvx + corr;
                 fluid_attributes.velocities[ui] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
             }
 
-            if (divY > 0.f) {
-                picV = (valid0v * d0_v * fluid_attributes.v[nr0_v] + valid1v * d1_v * fluid_attributes.v[nr1_v] + valid2v * d2_v * fluid_attributes.v[nr2_v] + valid3v * d3_v * fluid_attributes.v[nr3_v]) / divY;
+            float weightGradXLeft = fluid_attributes.dxLefts[i].vu[1];
+            float weightGradYTop = fluid_attributes.dyTops[i].vu[1];
+            float weightGradXRight = fluid_attributes.dxRights[i].vu[1];
+            float weightGradYBottom = fluid_attributes.dyBottoms[i].vu[1];
 
-                corr = (valid0v * d0_v * (fluid_attributes.v[nr0_v] - fluid_attributes.prevV[nr0_v]) + valid1v * d1_v * (fluid_attributes.v[nr1_v] - fluid_attributes.prevV[nr1_v]) + valid2v * d2_v * (fluid_attributes.v[nr2_v] - fluid_attributes.prevV[nr2_v]) + valid3v * d3_v * (fluid_attributes.v[nr3_v] - fluid_attributes.prevV[nr3_v])) / divY;
+            float dudx = 0.f;
+            float dudy = 0.f;
+
+            dudx += validTopLeftWeight * gridVel_topLeft * (weightGradYTop * fluid_attributes.invSpacing - fluid_attributes.invSpacing);
+            dudy += validTopLeftWeight * gridVel_topLeft * (weightGradXLeft * fluid_attributes.invSpacing - fluid_attributes.invSpacing);
+
+            dudx += validTopRightWeight * gridVel_topRight * -(weightGradYTop * fluid_attributes.invSpacing + fluid_attributes.invSpacing);
+            dudy += validTopRightWeight * gridVel_topRight * -(weightGradXRight * fluid_attributes.invSpacing);
+
+            dudx += validBottomLeftWeight * gridVel_bottomLeft * -(weightGradYBottom * fluid_attributes.invSpacing);
+            dudy += validBottomLeftWeight * gridVel_bottomLeft * -(weightGradXLeft * fluid_attributes.invSpacing + fluid_attributes.invSpacing);
+
+            dudx += validBottomRightWeight * gridVel_bottomRight * (weightGradYBottom * fluid_attributes.invSpacing);
+            dudy += validBottomRightWeight * gridVel_bottomRight * (weightGradXRight * fluid_attributes.invSpacing);
+        
+            fluid_attributes.affineMats[matIdx] = dudx;
+            fluid_attributes.affineMats[matIdx + 1] = dudy;
+        }
+    }
+
+    void transferVGridToParticles(int32_t startIndex, int32_t endIndex) {
+        for (int32_t i = startIndex; i < endIndex; ++i) {
+            int32_t vi = 2 * i + 1;
+            float pvy = fluid_attributes.velocities[vi];
+            int matIdx = 4 * i;
+
+            int32_t topLeftCell = topLeftCells[vi];
+            int32_t topRightCell = topRightCells[vi];
+            int32_t bottomRightCell = bottomRightCells[vi];
+            int32_t bottomLeftCell = bottomLeftCells[vi];
+
+            float topLeftWeight = topLeftWeights[vi];
+            float topRightWeight = topRightWeights[vi];
+            float bottomLeftWeight = bottomLeftWeights[vi];
+            float bottomRightWeight = bottomRightWeights[vi];
+
+            float gridVel_topLeft = fluid_attributes.v[topLeftCell];
+            float gridVel_topRight = fluid_attributes.v[topRightCell];
+            float gridVel_bottomRight = fluid_attributes.v[bottomRightCell];
+            float gridVel_bottomLeft = fluid_attributes.v[bottomLeftCell];
+           
+            const float validTopLeftWeight = fluid_attributes.cellType[topLeftCell] != AIR_CELL || 
+                                             fluid_attributes.cellType[topLeftCell - 1] != AIR_CELL;
+            const float validTopRightWeight = fluid_attributes.cellType[topRightCell] != AIR_CELL || 
+                                              fluid_attributes.cellType[topRightCell - 1] != AIR_CELL;
+            const float validBottomLeftWeight = fluid_attributes.cellType[bottomLeftCell] != AIR_CELL || 
+                                                fluid_attributes.cellType[bottomLeftCell - 1] != AIR_CELL;
+            const float validBottomRightWeight = fluid_attributes.cellType[bottomRightCell] != AIR_CELL || 
+                                                 fluid_attributes.cellType[bottomRightCell - 1] != AIR_CELL;
+
+            const float divY = validTopLeftWeight * topLeftWeight + validTopRightWeight * topRightWeight + validBottomLeftWeight * bottomLeftWeight + validBottomRightWeight * bottomRightWeight;
+
+            float picV;
+            float corr;
+            float flipV;
+
+            if (divY > 0.f) {
+                picV = (validTopLeftWeight * topLeftWeight * gridVel_topLeft + 
+                        validTopRightWeight * topRightWeight * gridVel_topRight + 
+                        validBottomLeftWeight * bottomLeftWeight * gridVel_bottomLeft + 
+                        validBottomRightWeight * bottomRightWeight * gridVel_bottomRight
+                        ) / divY;
+
+                corr = (validTopLeftWeight * topLeftWeight * (gridVel_topLeft - fluid_attributes.prevV[topLeftCell]) + 
+                        validTopRightWeight * topRightWeight * (gridVel_topRight - fluid_attributes.prevV[topRightCell]) + 
+                        validBottomLeftWeight * bottomLeftWeight * (gridVel_bottomLeft - fluid_attributes.prevV[bottomLeftCell]) + 
+                        validBottomRightWeight * bottomRightWeight * (gridVel_bottomRight - fluid_attributes.prevV[bottomRightCell])
+                        ) / divY;
+
                 flipV = pvy + corr;
                 fluid_attributes.velocities[vi] = (1.f - fluid_attributes.flipRatio) * picV + fluid_attributes.flipRatio * flipV;
             }
+
+            float weightGradXLeft = fluid_attributes.dxLefts[i].vu[0];
+            float weightGradYTop = fluid_attributes.dyTops[i].vu[0];
+            float weightGradXRight = fluid_attributes.dxRights[i].vu[0];
+            float weightGradYBottom = fluid_attributes.dyBottoms[i].vu[0];
+
+            float dvdx = 0.f;
+            float dvdy = 0.f;
+
+            dvdx += validTopLeftWeight * gridVel_topLeft * (weightGradYTop * fluid_attributes.invSpacing - fluid_attributes.invSpacing);
+            dvdy += validTopLeftWeight * gridVel_topLeft * (weightGradXLeft * fluid_attributes.invSpacing - fluid_attributes.invSpacing);
+
+            dvdx += validTopRightWeight * gridVel_topRight * -(weightGradYTop * fluid_attributes.invSpacing + fluid_attributes.invSpacing);
+            dvdy += validTopRightWeight * gridVel_topRight * -(weightGradXRight * fluid_attributes.invSpacing);
+
+            dvdx += validBottomLeftWeight * gridVel_bottomLeft * -(weightGradYBottom * fluid_attributes.invSpacing);
+            dvdy += validBottomLeftWeight * gridVel_bottomLeft * -(weightGradXLeft * fluid_attributes.invSpacing + fluid_attributes.invSpacing);
+
+            dvdx += validBottomRightWeight * gridVel_bottomRight * (weightGradYBottom * fluid_attributes.invSpacing);
+            dvdy += validBottomRightWeight * gridVel_bottomRight * (weightGradXRight * fluid_attributes.invSpacing);
+        
+            fluid_attributes.affineMats[matIdx + 2] = dvdx;
+            fluid_attributes.affineMats[matIdx + 3] = dvdy;
         }
     }
 
@@ -476,35 +648,35 @@ private:
             y = clamp(y, fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
 
             int x0 = std::max(1, std::min((int)(std::floor((x - halfSpacing) * invSpacing)), fluid_attributes.numX - 2));
-            float tx = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
             int x1 = std::min(x0 + 1, fluid_attributes.numX - 1);
 
             int y0 = std::max(1, std::min((int)(std::floor((y - halfSpacing) * invSpacing)), fluid_attributes.numY - 2));
-            float ty = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
             int y1 = std::min(y0 + 1, fluid_attributes.numY - 2);
            
-            float sx = 1.f - tx;
-            float sy = 1.f - ty;
+            float dxLeft = ((x - halfSpacing) - x0 * fluid_attributes.cellSpacing) * invSpacing;
+            float dyTop = ((y - halfSpacing) - y0 * fluid_attributes.cellSpacing) * invSpacing;
+            float dxRight = 1.f - dxLeft;
+            float dyBottom = 1.f - dyTop;
 
-            if (x0 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
-                threadDensities[threadID][x0 * n + y0] += sx * sy;
-            }
-            if (x1 < fluid_attributes.numX && y0 < fluid_attributes.numY) {
-                threadDensities[threadID][x1 * n + y0] += tx * sy;
-            }
-            if (x1 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
-                threadDensities[threadID][x1 * n + y1] += tx * ty;
-            }
-            if (x0 < fluid_attributes.numX && y1 < fluid_attributes.numY) {
-                threadDensities[threadID][x0 * n + y1] += sx * ty;
-            }
+            int topLeft = x0 * n + y0;
+            int topRight = x1 * n + y0;
+            int bottomLeft = x0 * n + y1;
+            int bottomRight = x1 * n + y1;
+
+            threadGridBuffers[threadID][topLeft] += dxRight * dyBottom;
+            
+            threadGridBuffers[threadID][topRight] += dxLeft * dyBottom;
+                
+            threadGridBuffers[threadID][bottomLeft] += dxRight * dyTop;
+                
+            threadGridBuffers[threadID][bottomRight] += dxLeft * dyTop;
         }
     }
 
     void applyLocalDensityUpdates(int start, int end) {
         for (int i = start; i < end; ++i) {
             for (int j = 0; j < fluid_attributes.numThreads; ++j) {
-                fluid_attributes.cellDensities[i] += threadDensities[j][i];
+                fluid_attributes.cellDensities[i] += threadGridBuffers[j][i];
             }
         }
     }
@@ -515,31 +687,4 @@ private:
         });
     }
 
-    /*void updateParticleDensities(int start, int end) {
-        for (int i = start; i < end; ++i) {
-            float px = clamp(fluid_attributes.positions[2 * i], fluid_attributes.cellSpacing, (fluid_attributes.numX - 1) * fluid_attributes.cellSpacing);
-            float py = clamp(fluid_attributes.positions[2 * i + 1], fluid_attributes.cellSpacing, (fluid_attributes.numY - 1) * fluid_attributes.cellSpacing);
-
-            int x0 = std::max(1, std::min((int)std::floor(px * invSpacing), fluid_attributes.numX - 2));
-            int y0 = std::max(1, std::min((int)std::floor(py * invSpacing), fluid_attributes.numY - 2));
-            int x1 = x0 + 1;
-            int y1 = y0 + 1;
-
-            int topL = x0 * n + y0;
-            int topR = x1 * n + y0;
-            int botL = x0 * n + y1;
-            int botR = x1 * n + y1;
-
-            float tx = (px - x0 * fluid_attributes.cellSpacing) * invSpacing;
-            float ty = (py - y0 * fluid_attributes.cellSpacing) * invSpacing;
-            float sx = 1.f - tx;
-            float sy = 1.f - ty;
-
-            fluid_attributes.densities[i] = 0.f;
-            fluid_attributes.densities[i] += sx * sy * fluid_attributes.cellDensities[topL];
-            fluid_attributes.densities[i] += tx * sy * fluid_attributes.cellDensities[topR];
-            fluid_attributes.densities[i] += sx * ty * fluid_attributes.cellDensities[botL];
-            fluid_attributes.densities[i] += tx * ty * fluid_attributes.cellDensities[botR];
-        }
-    }*/
 };

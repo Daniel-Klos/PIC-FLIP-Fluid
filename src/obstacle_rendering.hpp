@@ -40,7 +40,7 @@ struct ObstacleRenderer {
     }
 
     void drawPencil(int pencilRadius) {
-        sf::Vector2i localPos = sf::Vector2i{fluid_attributes.frame_context.simulation_mouse_pos / fluid_attributes.cellSpacing};
+        sf::Vector2i localPos = sf::Vector2i{fluid_attributes.frame_context.world_mouse_pos / fluid_attributes.cellSpacing};
 
         sf::Vector2f simPos = sf::Vector2f(localPos) * fluid_attributes.cellSpacing + sf::Vector2f{fluid_attributes.halfSpacing, fluid_attributes.halfSpacing};
 
