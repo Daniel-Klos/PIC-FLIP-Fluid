@@ -27,5 +27,5 @@ Improvements to be made:
 -  DDA ray casting & making sure that particle-particle collisions don't push particles into obstacles
 -  Actual fluid rendering, in addition to the current particle view
 -  Implicit Density Projection
--  Currently using no-slip boundary conditions. Implement slip boundary conditions from that Fedkiw paper
+-  Currently using no-slip boundary conditions. Implement slip boundary conditions from that Muller paper
 -  Use thread buffers more (to grid most importantly)
